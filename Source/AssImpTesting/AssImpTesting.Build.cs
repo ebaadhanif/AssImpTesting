@@ -9,11 +9,7 @@ public class AssImpTesting : ModuleRules
 	{
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 	
-		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput", "ProceduralMeshComponent", "AssetRegistry" , "EditorScriptingUtilities" , "UnrealEd",
-                "Kismet",
-                "KismetCompiler",
-                "AssetTools",
-                "BlueprintGraph",
+		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput", "ProceduralMeshComponent", "AssetRegistry",
             "MeshDescription", 
     "StaticMeshDescription", "ImageWrapper"});
 

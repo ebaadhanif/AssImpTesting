@@ -147,7 +147,6 @@ void AMeshLoader::ProcessMesh(aiMesh* Mesh, const aiScene* Scene, const FTransfo
 }
 
 
-
 UStaticMesh* AMeshLoader::CreateStaticMesh(
     const TArray<FVector>& Vertices,
     const TArray<int32>& Triangles,
@@ -249,7 +248,6 @@ UStaticMesh* AMeshLoader::CreateStaticMesh(
 
     return StaticMesh;
 }
-
 
 
 FTransform AMeshLoader::ConvertAssimpMatrix(const aiMatrix4x4& AssimpMatrix)
@@ -475,8 +473,6 @@ UMaterialInstanceDynamic* AMeshLoader::CreateMaterialFromAssimp(aiMaterial* Assi
 
     return MatInstance;
 }
-
-
 
 UTexture2D* AMeshLoader::CreateTextureFromEmbedded(const aiTexture* EmbeddedTex, const FString& DebugName)
 {
