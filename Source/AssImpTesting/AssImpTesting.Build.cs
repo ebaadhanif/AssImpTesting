@@ -15,7 +15,7 @@ public class AssImpTesting : ModuleRules
                 "AssetTools",
                 "BlueprintGraph",
             "MeshDescription", 
-    "StaticMeshDescription"});
+    "StaticMeshDescription", "ImageWrapper"});
 
         string AssimpPath = Path.Combine(ModuleDirectory, "../../ThirdParty/Assimp");
 
