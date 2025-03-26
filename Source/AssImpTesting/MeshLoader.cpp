@@ -143,7 +143,6 @@ void AMeshLoader::ProcessMesh(aiMesh* Mesh, const aiScene* Scene, const FTransfo
         MeshActor->GetStaticMeshComponent()->SetMobility(EComponentMobility::Movable);
         MeshActor->GetStaticMeshComponent()->SetMaterial(0, Material);
         MeshActor->SetActorScale3D(Transform.GetScale3D());
-        SpawnMeshInScene(StaticMesh, Transform);
     }
 }
 
@@ -251,13 +250,7 @@ UStaticMesh* AMeshLoader::CreateStaticMesh(
     return StaticMesh;
 }
 
-void AMeshLoader::SpawnMeshInScene(UStaticMesh* StaticMesh, const FTransform& Transform)
-{
-    AStaticMeshActor* MeshActor = GetWorld()->SpawnActor<AStaticMeshActor>(AStaticMeshActor::StaticClass(), Transform);
-    MeshActor->GetStaticMeshComponent()->SetStaticMesh(StaticMesh);
-    MeshActor->GetStaticMeshComponent()->SetMobility(EComponentMobility::Movable);
-    MeshActor->SetActorScale3D(Transform.GetScale3D());
-}
+
 
 FTransform AMeshLoader::ConvertAssimpMatrix(const aiMatrix4x4& AssimpMatrix)
 {
@@ -391,53 +384,34 @@ UTexture2D* AMeshLoader::LoadTextureFromDisk(const FString& FilePath)
 UMaterialInstanceDynamic* AMeshLoader::CreateMaterialFromAssimp(aiMaterial* AssimpMaterial, const aiScene* Scene)
 {
     if (!MasterMaterial)
-    {
-        LoadMasterMaterial(); // Load M_BaseMaterial
-    }
+        LoadMasterMaterial();
 
     if (!MasterMaterial)
     {
-        UE_LOG(LogTemp, Error, TEXT("No valid master material available"));
+        UE_LOG(LogTemp, Error, TEXT("❌ No valid master material loaded."));
         return nullptr;
     }
 
     UMaterialInstanceDynamic* MatInstance = UMaterialInstanceDynamic::Create(MasterMaterial, GetTransientPackage());
     if (!MatInstance)
     {
-        UE_LOG(LogTemp, Error, TEXT("Failed to create dynamic material instance"));
+        UE_LOG(LogTemp, Error, TEXT("❌ Failed to create dynamic material instance."));
         return nullptr;
     }
 
-    LoadedMaterials.Add(MatInstance); // Prevent GC
-
+    LoadedMaterials.Add(MatInstance);
     const FString BaseDir = FPaths::GetPath(FBXFilePath);
 
-    // Fallback diffuse color
+    // Handle fallback base color
     aiColor3D DiffuseColor(1.0f, 1.0f, 1.0f);
-    bool bHasDiffuseColor = AssimpMaterial->Get(AI_MATKEY_COLOR_DIFFUSE, DiffuseColor) == AI_SUCCESS;
-    FLinearColor FinalColor = bHasDiffuseColor
-        ? FLinearColor(DiffuseColor.r, DiffuseColor.g, DiffuseColor.b)
-        : FLinearColor(0.8f, 0.8f, 0.8f); // fallback light gray
-
-    MatInstance->SetVectorParameterValue("BaseColor", FinalColor);
-    MatInstance->SetScalarParameterValue("UseBaseColorTex", 0.0f); // default to color
-
-    // Metallic
-    float Metallic = 0.0f;
-    if (AssimpMaterial->Get(AI_MATKEY_METALLIC_FACTOR, Metallic) == AI_SUCCESS)
+    if (AssimpMaterial->Get(AI_MATKEY_COLOR_DIFFUSE, DiffuseColor) == AI_SUCCESS)
     {
-        MatInstance->SetScalarParameterValue("Metallic", Metallic);
+        FLinearColor Color(DiffuseColor.r, DiffuseColor.g, DiffuseColor.b);
+        MatInstance->SetVectorParameterValue("BaseColor", Color);
+        UE_LOG(LogTemp, Warning, TEXT("🎨 Fallback color set: R=%.2f G=%.2f B=%.2f"), Color.R, Color.G, Color.B);
     }
 
-    // Roughness
-    float Roughness = 0.5f;
-    if (AssimpMaterial->Get(AI_MATKEY_ROUGHNESS_FACTOR, Roughness) == AI_SUCCESS)
-    {
-        MatInstance->SetScalarParameterValue("Roughness", Roughness);
-    }
-
-    // Texture loader lambda
-    auto TryLoadTexture = [&](aiTextureType Type, const FName& ParamName, const FName& EnableParamName)
+    auto TryApplyTexture = [&](aiTextureType Type, const FName& ParamName, const FName& EnableParamName)
         {
             aiString TexPath;
             if (AssimpMaterial->GetTexture(Type, 0, &TexPath) == AI_SUCCESS)
@@ -452,7 +426,13 @@ UMaterialInstanceDynamic* AMeshLoader::CreateMaterialFromAssimp(aiMaterial* Assi
                 }
                 else
                 {
+                  
                     FString FullPath = FPaths::Combine(BaseDir, Path);
+                    FPaths::NormalizeFilename(FullPath);  // ✅ fix mixed slashes
+                    if (!FPaths::FileExists(FullPath))
+                    {
+                        UE_LOG(LogTemp, Warning, TEXT("❌ Texture file not found: %s"), *FullPath);
+                    }
                     Texture = LoadTextureFromDisk(FullPath);
                 }
 
@@ -460,23 +440,43 @@ UMaterialInstanceDynamic* AMeshLoader::CreateMaterialFromAssimp(aiMaterial* Assi
                 {
                     MatInstance->SetTextureParameterValue(ParamName, Texture);
                     if (!EnableParamName.IsNone())
-                    {
                         MatInstance->SetScalarParameterValue(EnableParamName, 1.0f);
-                    }
-                    UE_LOG(LogTemp, Display, TEXT("Applied texture: %s for param: %s"), *Path, *ParamName.ToString());
+                    UE_LOG(LogTemp, Display, TEXT("✅ Applied texture: %s → %s"), *Path, *ParamName.ToString());
                 }
+                else
+                {
+                    UE_LOG(LogTemp, Warning, TEXT("❌ Texture not found: %s for %s"), *Path, *ParamName.ToString());
+                }
+            }
+            else
+            {
+                UE_LOG(LogTemp, Warning, TEXT("⚠️ No texture assigned in FBX for type: %d (%s)"), (int32)Type, *ParamName.ToString());
             }
         };
 
-    // Try applying known texture types
-    TryLoadTexture(aiTextureType_DIFFUSE, "BaseColorTex", "UseBaseColorTex");
-    TryLoadTexture(aiTextureType_BASE_COLOR, "BaseColorTex", "UseBaseColorTex");
+    // Try all known textures with mapping to master material
+    TryApplyTexture(aiTextureType_DIFFUSE, "BaseColorTex", "UseBaseColorTex");
+    TryApplyTexture(aiTextureType_BASE_COLOR, "BaseColorTex", "UseBaseColorTex");
+    TryApplyTexture(aiTextureType_NORMALS, "NormalMap", "UseNormalMap");
+    TryApplyTexture(aiTextureType_HEIGHT, "NormalMap", "UseNormalMap"); // fallback
+    TryApplyTexture(aiTextureType_SPECULAR, "SpecularMap", "UseSpecularMap");
+    TryApplyTexture(aiTextureType_METALNESS, "MetallicMap", "UseMetallicMap");
+    TryApplyTexture(aiTextureType_AMBIENT_OCCLUSION, "AOMap", "UseAOMap");
+    TryApplyTexture(aiTextureType_EMISSIVE, "EmissiveMap", "UseEmissiveMap");
 
-    TryLoadTexture(aiTextureType_NORMALS, "NormalMap", "UseNormalMap");
-    TryLoadTexture(aiTextureType_HEIGHT, "NormalMap", "UseNormalMap"); // fallback normal
+    // Scalar fallbacks
+    float Metallic = 0.0f;
+    if (AssimpMaterial->Get(AI_MATKEY_METALLIC_FACTOR, Metallic) == AI_SUCCESS)
+        MatInstance->SetScalarParameterValue("Metallic", Metallic);
+
+    float Roughness = 0.5f;
+    if (AssimpMaterial->Get(AI_MATKEY_ROUGHNESS_FACTOR, Roughness) == AI_SUCCESS)
+        MatInstance->SetScalarParameterValue("Roughness", Roughness);
 
     return MatInstance;
 }
+
+
 
 UTexture2D* AMeshLoader::CreateTextureFromEmbedded(const aiTexture* EmbeddedTex, const FString& DebugName)
 {

@@ -37,7 +37,6 @@ private:
     void ProcessMesh(aiMesh* Mesh, const aiScene* Scene, const FTransform& Transform);
     UStaticMesh* CreateStaticMesh(const TArray<FVector>& Vertices, const TArray<int32>& Triangles, const TArray<FVector>& Normals, const TArray<FVector2D>& UVs, const TArray<FVector>& Tangents, const TArray<FVector>& Bitangents);
    // UStaticMesh* CreateStaticMesh(const TArray<FVector>& Vertices, const TArray<int32>& Triangles, const TArray<FVector>& Normals, const TArray<FVector2D>& UVs);
-    void SpawnMeshInScene(UStaticMesh* StaticMesh, const FTransform& Transform);
     FTransform ConvertAssimpMatrix(const aiMatrix4x4& AssimpMatrix);
     UMaterialInstanceDynamic* CreateMaterialFromAssimp(aiMaterial* AssimpMaterial, const aiScene* Scene);
     UTexture2D* CreateTextureFromEmbedded(const aiTexture* EmbeddedTex, const FString& DebugName);
@@ -53,5 +52,5 @@ private:
 
     UTexture2D* LoadTextureFromDisk(const FString& FilePath);
 
-    FString FBXFilePath= ("C:/Users/ebaad.hanif/Desktop/FBX Models/car1.fbx");;
+    FString FBXFilePath= ("C:/Users/ebaad.hanif/Desktop/FBX Models/car.fbx");;
 };
