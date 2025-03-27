@@ -1,11 +1,9 @@
 ﻿#include "MeshLoader.h"
+#include "ProceduralMeshComponent.h"
+#include "Engine/World.h"
 #include "StaticMeshAttributes.h"
 #include "Misc/Paths.h"
-#include "UObject/Package.h"
-#include "Engine/StaticMeshActor.h"
-#include "MeshLoader.h"
-#include "StaticMeshAttributes.h"
-#include "Misc/Paths.h"
+#include "UObject/ConstructorHelpers.h"
 #include "UObject/Package.h"
 #include "Engine/StaticMeshActor.h"
 #include "PhysicsEngine/BodySetup.h"
@@ -13,6 +11,7 @@
 #include "IImageWrapper.h"
 #include "Modules/ModuleManager.h"
 #include "Misc/FileHelper.h"
+#include "Materials/MaterialInstanceDynamic.h"
 
 AMeshLoader::AMeshLoader()
 {
@@ -31,7 +30,7 @@ void AMeshLoader::LoadFBXModel(const FString& FilePath)
 {
     if (!FPaths::FileExists(FilePath))
     {
-        UE_LOG(LogTemp, Error, TEXT("FBX file not found: %s"), *FilePath);
+        UE_LOG(LogTemp, Error, TEXT("❌ FBX file not found: %s"), *FilePath);
         return;
     }
 
@@ -43,11 +42,12 @@ void AMeshLoader::LoadFBXModel(const FString& FilePath)
         aiProcess_FlipUVs |
         aiProcess_JoinIdenticalVertices |
         aiProcess_ImproveCacheLocality |
-        aiProcess_OptimizeMeshes | aiProcess_PreTransformVertices);
+        aiProcess_OptimizeMeshes |
+        aiProcess_PreTransformVertices);
 
     if (!Scene || !Scene->mRootNode)
     {
-        UE_LOG(LogTemp, Error, TEXT("Failed to load FBX: %s"), *FilePath);
+        UE_LOG(LogTemp, Error, TEXT("❌ Failed to load FBX: %s"), *FilePath);
         return;
     }
 
@@ -58,13 +58,13 @@ void AMeshLoader::ProcessNode(aiNode* Node, const aiScene* Scene, const FTransfo
 {
     FTransform NodeTransform = ConvertAssimpMatrix(Node->mTransformation) * ParentTransform;
 
-    for (unsigned int i = 0; i < Node->mNumMeshes; i++)
+    for (unsigned int i = 0; i < Node->mNumMeshes; ++i)
     {
         aiMesh* Mesh = Scene->mMeshes[Node->mMeshes[i]];
         ProcessMesh(Mesh, Scene, NodeTransform);
     }
 
-    for (unsigned int i = 0; i < Node->mNumChildren; i++)
+    for (unsigned int i = 0; i < Node->mNumChildren; ++i)
     {
         ProcessNode(Node->mChildren[i], Scene, NodeTransform);
     }
@@ -79,7 +79,7 @@ void AMeshLoader::ProcessMesh(aiMesh* Mesh, const aiScene* Scene, const FTransfo
     TArray<FVector> Tangents;
     TArray<FVector> Bitangents;
 
-    for (unsigned int i = 0; i < Mesh->mNumVertices; i++)
+    for (unsigned int i = 0; i < Mesh->mNumVertices; ++i)
     {
         FVector Position(Mesh->mVertices[i].x, Mesh->mVertices[i].z, Mesh->mVertices[i].y);
         Vertices.Add(Position);
@@ -87,7 +87,7 @@ void AMeshLoader::ProcessMesh(aiMesh* Mesh, const aiScene* Scene, const FTransfo
         FVector Normal(Mesh->mNormals[i].x, Mesh->mNormals[i].z, Mesh->mNormals[i].y);
         Normals.Add(Normal.GetSafeNormal());
 
-        FVector2D UV(0.0f, 0.0f);
+        FVector2D UV(0, 0);
         if (Mesh->HasTextureCoords(0))
         {
             UV = FVector2D(Mesh->mTextureCoords[0][i].x, Mesh->mTextureCoords[0][i].y);
@@ -103,7 +103,7 @@ void AMeshLoader::ProcessMesh(aiMesh* Mesh, const aiScene* Scene, const FTransfo
         }
     }
 
-    for (unsigned int i = 0; i < Mesh->mNumFaces; i++)
+    for (unsigned int i = 0; i < Mesh->mNumFaces; ++i)
     {
         aiFace Face = Mesh->mFaces[i];
         if (Face.mNumIndices == 3)
@@ -114,15 +114,6 @@ void AMeshLoader::ProcessMesh(aiMesh* Mesh, const aiScene* Scene, const FTransfo
         }
     }
 
-    UStaticMesh* StaticMesh = CreateStaticMesh(Vertices, Triangles, Normals, UVs, Tangents, Bitangents);
-    if (!StaticMesh)
-    {
-        UE_LOG(LogTemp, Error, TEXT("❌ Failed to create StaticMesh"));
-        return;
-    }
-
-    LoadedMeshes.Add(StaticMesh);
-
     UMaterialInterface* Material = nullptr;
     if (Mesh->mMaterialIndex >= 0 && Scene->mMaterials[Mesh->mMaterialIndex])
     {
@@ -131,124 +122,70 @@ void AMeshLoader::ProcessMesh(aiMesh* Mesh, const aiScene* Scene, const FTransfo
 
     if (!Material)
     {
-        Material = LoadObject<UMaterialInterface>(nullptr,
-            TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
+        Material = LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
     }
 
-    AStaticMeshActor* MeshActor = GetWorld()->SpawnActor<AStaticMeshActor>(AStaticMeshActor::StaticClass(), Transform);
-    MeshActor->GetStaticMeshComponent()->SetStaticMesh(StaticMesh);
-    MeshActor->GetStaticMeshComponent()->SetMobility(EComponentMobility::Movable);
-    MeshActor->GetStaticMeshComponent()->SetMaterial(0, Material);
-    MeshActor->SetActorScale3D(Transform.GetScale3D());
-
-    const FBoxSphereBounds Bounds = StaticMesh->GetBounds();
-    UE_LOG(LogTemp, Display, TEXT("✅ Spawned actor at Location: %s | Scale: %s"),
-        *Transform.GetLocation().ToString(),
-        *Transform.GetScale3D().ToString());
-
-    UE_LOG(LogTemp, Display, TEXT("📦 Mesh bounds: Origin=%s | Extent=%s"),
-        *Bounds.Origin.ToString(),
-        *Bounds.BoxExtent.ToString());
+    CreateProceduralMesh(Vertices, Triangles, Normals, UVs, Tangents, Bitangents, Material, Transform);
 }
 
-
-UStaticMesh* AMeshLoader::CreateStaticMesh(
+void AMeshLoader::CreateProceduralMesh(
     const TArray<FVector>& Vertices,
     const TArray<int32>& Triangles,
     const TArray<FVector>& Normals,
     const TArray<FVector2D>& UVs,
     const TArray<FVector>& Tangents,
-    const TArray<FVector>& Bitangents)
+    const TArray<FVector>& Bitangents,
+    UMaterialInterface* Material,
+    const FTransform& Transform)
 {
-    FMeshDescription MeshDescription;
-    FStaticMeshAttributes Attributes(MeshDescription);
-    Attributes.Register();
+    AActor* NewActor = GetWorld()->SpawnActor<AActor>(AActor::StaticClass(), Transform);
+    UProceduralMeshComponent* ProcMesh = NewObject<UProceduralMeshComponent>(NewActor);
+    ProcMesh->RegisterComponent();
+    NewActor->SetRootComponent(ProcMesh);
 
-    TMap<int32, FVertexID> IndexToVertex;
-
-    for (int32 i = 0; i < Vertices.Num(); ++i)
+    TArray<FProcMeshTangent> ProcTangents;
+    for (int32 i = 0; i < Tangents.Num(); ++i)
     {
-        FVertexID VertexID = MeshDescription.CreateVertex();
-        Attributes.GetVertexPositions()[VertexID] = FVector3f(Vertices[i]);
-        IndexToVertex.Add(i, VertexID);
+        ProcTangents.Add(FProcMeshTangent(Tangents[i], false));
     }
 
-    FPolygonGroupID PolygonGroupID = MeshDescription.CreatePolygonGroup();
+    ProcMesh->CreateMeshSection_LinearColor(
+        0,
+        Vertices,
+        Triangles,
+        Normals,
+        UVs,
+        TArray<FLinearColor>(),
+        ProcTangents,
+        true);
 
-    for (int32 i = 0; i < Triangles.Num(); i += 3)
-    {
-        TArray<FVertexInstanceID> VertexInstanceIDs;
-        for (int32 j = 0; j < 3; ++j)
-        {
-            int32 Index = Triangles[i + j];
-            FVertexInstanceID InstanceID = MeshDescription.CreateVertexInstance(IndexToVertex[Index]);
-
-            if (Normals.IsValidIndex(Index))
-                Attributes.GetVertexInstanceNormals()[InstanceID] = FVector3f(Normals[Index]);
-
-            if (UVs.IsValidIndex(Index))
-                Attributes.GetVertexInstanceUVs()[InstanceID] = FVector2f(UVs[Index]);
-
-            if (Tangents.IsValidIndex(Index))
-                Attributes.GetVertexInstanceTangents()[InstanceID] = FVector3f(Tangents[Index]);
-
-            if (Bitangents.IsValidIndex(Index) && Normals.IsValidIndex(Index))
-            {
-                float Sign = FVector::DotProduct(
-                    FVector::CrossProduct(Normals[Index], Tangents[Index]),
-                    Bitangents[Index]) < 0 ? -1.0f : 1.0f;
-                Attributes.GetVertexInstanceBinormalSigns()[InstanceID] = Sign;
-            }
-
-            VertexInstanceIDs.Add(InstanceID);
-        }
-
-        MeshDescription.CreatePolygon(PolygonGroupID, VertexInstanceIDs);
-    }
-
-    // Now use BuildFromMeshDescriptions instead of SetMeshDescription
-    TArray<const FMeshDescription*> MeshDescArray;
-    MeshDescArray.Add(&MeshDescription);
-
-    UStaticMesh* StaticMesh = NewObject<UStaticMesh>(GetTransientPackage(), NAME_None, RF_Transient);
-    StaticMesh->BuildFromMeshDescriptions(MeshDescArray);
-
-    return StaticMesh;
+    ProcMesh->SetMaterial(0, Material);
+    UE_LOG(LogTemp, Display, TEXT("✅ Spawned Procedural Mesh at %s"), *Transform.GetLocation().ToString());
 }
 
-
-
-
-FTransform AMeshLoader::ConvertAssimpMatrix(const aiMatrix4x4& AssimpMatrix)
+FTransform AMeshLoader::ConvertAssimpMatrix(const aiMatrix4x4& M)
 {
-    FMatrix UnrealMatrix(
-        FPlane(AssimpMatrix.a1, AssimpMatrix.a2, AssimpMatrix.a3, AssimpMatrix.a4),
-        FPlane(AssimpMatrix.b1, AssimpMatrix.b2, AssimpMatrix.b3, AssimpMatrix.b4),
-        FPlane(AssimpMatrix.c1, AssimpMatrix.c2, AssimpMatrix.c3, AssimpMatrix.c4),
-        FPlane(AssimpMatrix.d1, AssimpMatrix.d2, AssimpMatrix.d3, AssimpMatrix.d4)
+    FMatrix Matrix(
+        FPlane(M.a1, M.a2, M.a3, M.a4),
+        FPlane(M.b1, M.b2, M.b3, M.b4),
+        FPlane(M.c1, M.c2, M.c3, M.c4),
+        FPlane(M.d1, M.d2, M.d3, M.d4)
     );
 
-    FVector Position = FVector(UnrealMatrix.M[3][0], UnrealMatrix.M[3][1], UnrealMatrix.M[3][2]);
-    FVector Scale = FVector(UnrealMatrix.GetScaleVector());
-    FQuat Rotation = FQuat(UnrealMatrix);
-
+    FVector Position = FVector(Matrix.M[3][0], Matrix.M[3][1], Matrix.M[3][2]);
+    FVector Scale = Matrix.GetScaleVector();
+    FQuat Rotation = FQuat(Matrix);
     return FTransform(Rotation, Position, Scale);
 }
 
 FString AMeshLoader::ResolveTexturePath(const FString& TexturePath)
 {
-    // Handle embedded textures
     if (TexturePath.StartsWith("*"))
-    {
-        UE_LOG(LogTemp, Warning, TEXT("Embedded textures not yet implemented"));
-        return FString();
-    }
+        return FString(); // Embedded handled separately
 
-    // Convert relative paths
     FString BaseDir = FPaths::GetPath(FBXFilePath);
     FString FullPath = FPaths::Combine(BaseDir, TexturePath);
 
-    // Check common extensions
     TArray<FString> Extensions = { "", ".png", ".jpg", ".tga", ".dds" };
     for (const FString& Ext : Extensions)
     {
@@ -258,8 +195,84 @@ FString AMeshLoader::ResolveTexturePath(const FString& TexturePath)
         }
     }
 
-    UE_LOG(LogTemp, Warning, TEXT("Texture not found: %s"), *TexturePath);
     return FString();
+}
+
+UTexture2D* AMeshLoader::LoadTextureFromDisk(const FString& FilePath)
+{
+    if (!FPaths::FileExists(FilePath)) return nullptr;
+
+    TArray<uint8> FileData;
+    if (!FFileHelper::LoadFileToArray(FileData, *FilePath)) return nullptr;
+
+    IImageWrapperModule& Module = FModuleManager::LoadModuleChecked<IImageWrapperModule>("ImageWrapper");
+    EImageFormat Format = Module.DetectImageFormat(FileData.GetData(), FileData.Num());
+    TSharedPtr<IImageWrapper> Wrapper = Module.CreateImageWrapper(Format);
+
+    if (!Wrapper.IsValid() || !Wrapper->SetCompressed(FileData.GetData(), FileData.Num())) return nullptr;
+
+    TArray64<uint8> RawData;
+    if (!Wrapper->GetRaw(ERGBFormat::BGRA, 8, RawData)) return nullptr;
+
+    int32 Width = Wrapper->GetWidth();
+    int32 Height = Wrapper->GetHeight();
+
+    UTexture2D* Texture = UTexture2D::CreateTransient(Width, Height);
+    if (!Texture) return nullptr;
+
+    void* TextureData = Texture->GetPlatformData()->Mips[0].BulkData.Lock(LOCK_READ_WRITE);
+    FMemory::Memcpy(TextureData, RawData.GetData(), RawData.Num());
+    Texture->GetPlatformData()->Mips[0].BulkData.Unlock();
+
+    Texture->UpdateResource();
+    Texture->SetFlags(RF_Transient);
+    return Texture;
+}
+
+UMaterialInstanceDynamic* AMeshLoader::CreateMaterialFromAssimp(aiMaterial* AssimpMaterial, const aiScene* Scene)
+{
+    if (!MasterMaterial)
+    {
+        static const FString Path = TEXT("/Game/Materials/M_BaseMaterial.M_BaseMaterial");
+        MasterMaterial = LoadObject<UMaterial>(nullptr, *Path);
+    }
+
+    if (!MasterMaterial)
+    {
+        UE_LOG(LogTemp, Error, TEXT("❌ No master material"));
+        return nullptr;
+    }
+
+    UMaterialInstanceDynamic* MatInstance = UMaterialInstanceDynamic::Create(MasterMaterial, GetTransientPackage());
+    if (!MatInstance) return nullptr;
+
+    const FString BaseDir = FPaths::GetPath(FBXFilePath);
+
+    auto TryApplyTexture = [&](aiTextureType Type, const FName& Param, const FName& EnableParam)
+        {
+            aiString TexPath;
+            if (AssimpMaterial->GetTexture(Type, 0, &TexPath) == AI_SUCCESS)
+            {
+                FString Path = UTF8_TO_TCHAR(TexPath.C_Str());
+                FString FullPath = FPaths::Combine(BaseDir, Path);
+                FPaths::NormalizeFilename(FullPath);
+
+                UTexture2D* Texture = LoadTextureFromDisk(FullPath);
+                if (Texture)
+                {
+                    MatInstance->SetTextureParameterValue(Param, Texture);
+                    if (!EnableParam.IsNone())
+                        MatInstance->SetScalarParameterValue(EnableParam, 1.0f);
+                }
+            }
+        };
+
+    TryApplyTexture(aiTextureType_DIFFUSE, "BaseColorTex", "UseBaseColorTex");
+    TryApplyTexture(aiTextureType_NORMALS, "NormalMap", "UseNormalMap");
+    TryApplyTexture(aiTextureType_METALNESS, "MetallicMap", "UseMetallicMap");
+    TryApplyTexture(aiTextureType_AMBIENT_OCCLUSION, "AOMap", "UseAOMap");
+
+    return MatInstance;
 }
 
 UTexture2D* AMeshLoader::LoadTextureFromFile(const FString& FullPath)
@@ -274,173 +287,6 @@ UTexture2D* AMeshLoader::LoadTextureFromFile(const FString& FullPath)
         UE_LOG(LogTemp, Warning, TEXT("Failed to load texture: %s"), *FullPath);
     }
     return Texture;
-}
-
-void AMeshLoader::LoadMasterMaterial()
-{
-    static const FString MaterialPath = TEXT("/Game/Materials/M_BaseMaterial.M_BaseMaterial");
-    MasterMaterial = LoadObject<UMaterial>(nullptr, *MaterialPath);
-
-    if (!MasterMaterial)
-    {
-        UE_LOG(LogTemp, Error, TEXT("Failed to load master material at path: %s"), *MaterialPath);
-        MasterMaterial = LoadObject<UMaterial>(nullptr,
-            TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
-    }
-}
-
-UTexture2D* AMeshLoader::LoadTextureFromDisk(const FString& FilePath)
-{
-    if (!FPaths::FileExists(FilePath))
-    {
-        UE_LOG(LogTemp, Warning, TEXT("Texture file not found: %s"), *FilePath);
-        return nullptr;
-    }
-
-    TArray<uint8> FileData;
-    if (!FFileHelper::LoadFileToArray(FileData, *FilePath))
-    {
-        UE_LOG(LogTemp, Warning, TEXT("Failed to load file data: %s"), *FilePath);
-        return nullptr;
-    }
-
-    // Load image wrapper
-    IImageWrapperModule& ImageWrapperModule = FModuleManager::LoadModuleChecked<IImageWrapperModule>("ImageWrapper");
-    EImageFormat Format = ImageWrapperModule.DetectImageFormat(FileData.GetData(), FileData.Num());
-    if (Format == EImageFormat::Invalid)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("Unrecognized image format for file: %s"), *FilePath);
-        return nullptr;
-    }
-
-    TSharedPtr<IImageWrapper> ImageWrapper = ImageWrapperModule.CreateImageWrapper(Format);
-    if (!ImageWrapper.IsValid() || !ImageWrapper->SetCompressed(FileData.GetData(), FileData.Num()))
-    {
-        UE_LOG(LogTemp, Warning, TEXT("Failed to parse image data: %s"), *FilePath);
-        return nullptr;
-    }
-
-    TArray64<uint8> RawData;
-    if (!ImageWrapper->GetRaw(ERGBFormat::BGRA, 8, RawData))
-    {
-        UE_LOG(LogTemp, Warning, TEXT("Failed to extract raw pixel data: %s"), *FilePath);
-        return nullptr;
-    }
-
-    int32 Width = ImageWrapper->GetWidth();
-    int32 Height = ImageWrapper->GetHeight();
-
-    UTexture2D* Texture = UTexture2D::CreateTransient(Width, Height);
-    if (!Texture)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("Failed to create transient texture: %s"), *FilePath);
-        return nullptr;
-    }
-
-    void* TextureData = Texture->GetPlatformData()->Mips[0].BulkData.Lock(LOCK_READ_WRITE);
-    FMemory::Memcpy(TextureData, RawData.GetData(), RawData.Num());
-    Texture->GetPlatformData()->Mips[0].BulkData.Unlock();
-
-    Texture->UpdateResource();
-    Texture->SetFlags(RF_Transient);
-    Texture->Rename(*FPaths::GetBaseFilename(FilePath));
-
-    return Texture;
-}
-
-UMaterialInstanceDynamic* AMeshLoader::CreateMaterialFromAssimp(aiMaterial* AssimpMaterial, const aiScene* Scene)
-{
-    if (!MasterMaterial)
-        LoadMasterMaterial();
-
-    if (!MasterMaterial)
-    {
-        UE_LOG(LogTemp, Error, TEXT("❌ No valid master material loaded."));
-        return nullptr;
-    }
-
-    UMaterialInstanceDynamic* MatInstance = UMaterialInstanceDynamic::Create(MasterMaterial, GetTransientPackage());
-    if (!MatInstance)
-    {
-        UE_LOG(LogTemp, Error, TEXT("❌ Failed to create dynamic material instance."));
-        return nullptr;
-    }
-
-    LoadedMaterials.Add(MatInstance);
-    const FString BaseDir = FPaths::GetPath(FBXFilePath);
-
-    // Handle fallback base color
-    aiColor3D DiffuseColor(1.0f, 1.0f, 1.0f);
-    if (AssimpMaterial->Get(AI_MATKEY_COLOR_DIFFUSE, DiffuseColor) == AI_SUCCESS)
-    {
-        FLinearColor Color(DiffuseColor.r, DiffuseColor.g, DiffuseColor.b);
-        MatInstance->SetVectorParameterValue("BaseColor", Color);
-        UE_LOG(LogTemp, Warning, TEXT("🎨 Fallback color set: R=%.2f G=%.2f B=%.2f"), Color.R, Color.G, Color.B);
-    }
-
-    auto TryApplyTexture = [&](aiTextureType Type, const FName& ParamName, const FName& EnableParamName)
-        {
-            aiString TexPath;
-            if (AssimpMaterial->GetTexture(Type, 0, &TexPath) == AI_SUCCESS)
-            {
-                FString Path = UTF8_TO_TCHAR(TexPath.C_Str());
-                UTexture2D* Texture = nullptr;
-
-                if (Path.StartsWith(TEXT("*")))
-                {
-                    const aiTexture* Embedded = Scene->GetEmbeddedTexture(TexPath.C_Str());
-                    Texture = CreateTextureFromEmbedded(Embedded, Path);
-                }
-                else
-                {
-
-                    FString FullPath = FPaths::Combine(BaseDir, Path);
-                    FPaths::NormalizeFilename(FullPath);  // ✅ fix mixed slashes
-                    if (!FPaths::FileExists(FullPath))
-                    {
-                        UE_LOG(LogTemp, Warning, TEXT("❌ Texture file not found: %s"), *FullPath);
-                    }
-                    Texture = LoadTextureFromDisk(FullPath);
-                }
-
-                if (Texture)
-                {
-                    MatInstance->SetTextureParameterValue(ParamName, Texture);
-                    if (!EnableParamName.IsNone())
-                        MatInstance->SetScalarParameterValue(EnableParamName, 1.0f);
-                    UE_LOG(LogTemp, Display, TEXT("✅ Applied texture: %s → %s"), *Path, *ParamName.ToString());
-                }
-                else
-                {
-                    UE_LOG(LogTemp, Warning, TEXT("❌ Texture not found: %s for %s"), *Path, *ParamName.ToString());
-                }
-            }
-            else
-            {
-                UE_LOG(LogTemp, Warning, TEXT("⚠️ No texture assigned in FBX for type: %d (%s)"), (int32)Type, *ParamName.ToString());
-            }
-        };
-
-    // Try all known textures with mapping to master material
-    TryApplyTexture(aiTextureType_DIFFUSE, "BaseColorTex", "UseBaseColorTex");
-    TryApplyTexture(aiTextureType_BASE_COLOR, "BaseColorTex", "UseBaseColorTex");
-    TryApplyTexture(aiTextureType_NORMALS, "NormalMap", "UseNormalMap");
-    TryApplyTexture(aiTextureType_HEIGHT, "NormalMap", "UseNormalMap"); // fallback
-    TryApplyTexture(aiTextureType_SPECULAR, "SpecularMap", "UseSpecularMap");
-    TryApplyTexture(aiTextureType_METALNESS, "MetallicMap", "UseMetallicMap");
-    TryApplyTexture(aiTextureType_AMBIENT_OCCLUSION, "AOMap", "UseAOMap");
-    TryApplyTexture(aiTextureType_EMISSIVE, "EmissiveMap", "UseEmissiveMap");
-
-    // Scalar fallbacks
-    float Metallic = 0.0f;
-    if (AssimpMaterial->Get(AI_MATKEY_METALLIC_FACTOR, Metallic) == AI_SUCCESS)
-        MatInstance->SetScalarParameterValue("Metallic", Metallic);
-
-    float Roughness = 0.5f;
-    if (AssimpMaterial->Get(AI_MATKEY_ROUGHNESS_FACTOR, Roughness) == AI_SUCCESS)
-        MatInstance->SetScalarParameterValue("Roughness", Roughness);
-
-    return MatInstance;
 }
 
 UTexture2D* AMeshLoader::CreateTextureFromEmbedded(const aiTexture* EmbeddedTex, const FString& DebugName)
@@ -509,3 +355,15 @@ UTexture2D* AMeshLoader::CreateTextureFromEmbedded(const aiTexture* EmbeddedTex,
     return nullptr;
 }
 
+void AMeshLoader::LoadMasterMaterial()
+{
+    static const FString MaterialPath = TEXT("/Game/Materials/M_BaseMaterial.M_BaseMaterial");
+    MasterMaterial = LoadObject<UMaterial>(nullptr, *MaterialPath);
+
+    if (!MasterMaterial)
+    {
+        UE_LOG(LogTemp, Error, TEXT("Failed to load master material at path: %s"), *MaterialPath);
+        MasterMaterial = LoadObject<UMaterial>(nullptr,
+            TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
+    }
+}
