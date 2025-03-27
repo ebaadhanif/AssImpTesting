@@ -79,24 +79,19 @@ void AMeshLoader::ProcessMesh(aiMesh* Mesh, const aiScene* Scene, const FTransfo
     TArray<FVector> Tangents;
     TArray<FVector> Bitangents;
 
-    // Coordinate system conversion: Assimp (Y-up) to Unreal (Z-up)
     for (unsigned int i = 0; i < Mesh->mNumVertices; i++)
     {
-        // Swap Y and Z, negate Y to convert to Unreal's coordinate system
         FVector Position(Mesh->mVertices[i].x, Mesh->mVertices[i].z, Mesh->mVertices[i].y);
-        Position = Transform.TransformPosition(Position);
+        Vertices.Add(Position);
 
         FVector Normal(Mesh->mNormals[i].x, Mesh->mNormals[i].z, Mesh->mNormals[i].y);
-        Normal = Transform.TransformVector(Normal).GetSafeNormal();
+        Normals.Add(Normal.GetSafeNormal());
 
         FVector2D UV(0.0f, 0.0f);
         if (Mesh->HasTextureCoords(0))
         {
-            UV = FVector2D(Mesh->mTextureCoords[0][i].x,  Mesh->mTextureCoords[0][i].y);
+            UV = FVector2D(Mesh->mTextureCoords[0][i].x, Mesh->mTextureCoords[0][i].y);
         }
-
-        Vertices.Add(Position);
-        Normals.Add(Normal);
         UVs.Add(UV);
 
         if (Mesh->HasTangentsAndBitangents())
@@ -120,30 +115,40 @@ void AMeshLoader::ProcessMesh(aiMesh* Mesh, const aiScene* Scene, const FTransfo
     }
 
     UStaticMesh* StaticMesh = CreateStaticMesh(Vertices, Triangles, Normals, UVs, Tangents, Bitangents);
-    if (StaticMesh)
+    if (!StaticMesh)
     {
-        LoadedMeshes.Add(StaticMesh);
-
-        UMaterialInterface* Material = nullptr;
-        if (Mesh->mMaterialIndex >= 0 && Scene->mMaterials[Mesh->mMaterialIndex])
-        {
-            Material = CreateMaterialFromAssimp(Scene->mMaterials[Mesh->mMaterialIndex], Scene);
-        }
-
-        if (!Material)
-        {
-            Material = LoadObject<UMaterialInterface>(nullptr,
-                TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
-        }
-
-        StaticMesh->SetMaterial(0, Material);
-
-        AStaticMeshActor* MeshActor = GetWorld()->SpawnActor<AStaticMeshActor>(AStaticMeshActor::StaticClass(), Transform);
-        MeshActor->GetStaticMeshComponent()->SetStaticMesh(StaticMesh);
-        MeshActor->GetStaticMeshComponent()->SetMobility(EComponentMobility::Movable);
-        MeshActor->GetStaticMeshComponent()->SetMaterial(0, Material);
-        MeshActor->SetActorScale3D(Transform.GetScale3D());
+        UE_LOG(LogTemp, Error, TEXT("❌ Failed to create StaticMesh"));
+        return;
     }
+
+    LoadedMeshes.Add(StaticMesh);
+
+    UMaterialInterface* Material = nullptr;
+    if (Mesh->mMaterialIndex >= 0 && Scene->mMaterials[Mesh->mMaterialIndex])
+    {
+        Material = CreateMaterialFromAssimp(Scene->mMaterials[Mesh->mMaterialIndex], Scene);
+    }
+
+    if (!Material)
+    {
+        Material = LoadObject<UMaterialInterface>(nullptr,
+            TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
+    }
+
+    AStaticMeshActor* MeshActor = GetWorld()->SpawnActor<AStaticMeshActor>(AStaticMeshActor::StaticClass(), Transform);
+    MeshActor->GetStaticMeshComponent()->SetStaticMesh(StaticMesh);
+    MeshActor->GetStaticMeshComponent()->SetMobility(EComponentMobility::Movable);
+    MeshActor->GetStaticMeshComponent()->SetMaterial(0, Material);
+    MeshActor->SetActorScale3D(Transform.GetScale3D());
+
+    const FBoxSphereBounds Bounds = StaticMesh->GetBounds();
+    UE_LOG(LogTemp, Display, TEXT("✅ Spawned actor at Location: %s | Scale: %s"),
+        *Transform.GetLocation().ToString(),
+        *Transform.GetScale3D().ToString());
+
+    UE_LOG(LogTemp, Display, TEXT("📦 Mesh bounds: Origin=%s | Extent=%s"),
+        *Bounds.Origin.ToString(),
+        *Bounds.BoxExtent.ToString());
 }
 
 
@@ -155,99 +160,63 @@ UStaticMesh* AMeshLoader::CreateStaticMesh(
     const TArray<FVector>& Tangents,
     const TArray<FVector>& Bitangents)
 {
-    UStaticMesh* StaticMesh = NewObject<UStaticMesh>(GetTransientPackage(), NAME_None, RF_Transient);
-    if (!StaticMesh) return nullptr;
-
-    StaticMesh->InitResources();
-    FStaticMeshSourceModel& SourceModel = StaticMesh->AddSourceModel();
-
-    FMeshDescription* MeshDescription = StaticMesh->CreateMeshDescription(0);
-    if (!MeshDescription) return nullptr;
-
-    FStaticMeshAttributes Attributes(*MeshDescription);
+    FMeshDescription MeshDescription;
+    FStaticMeshAttributes Attributes(MeshDescription);
     Attributes.Register();
 
-    // Add vertex positions
-    TArray<FVertexID> VertexIDs;
-    VertexIDs.Reserve(Vertices.Num());
-    for (const FVector& Vertex : Vertices)
+    TMap<int32, FVertexID> IndexToVertex;
+
+    for (int32 i = 0; i < Vertices.Num(); ++i)
     {
-        FVertexID VertexID = MeshDescription->CreateVertex();
-        Attributes.GetVertexPositions()[VertexID] = FVector3f(Vertex);
-        VertexIDs.Add(VertexID);
+        FVertexID VertexID = MeshDescription.CreateVertex();
+        Attributes.GetVertexPositions()[VertexID] = FVector3f(Vertices[i]);
+        IndexToVertex.Add(i, VertexID);
     }
 
-    // Create polygon group
-    FPolygonGroupID PolygonGroupID = MeshDescription->CreatePolygonGroup();
+    FPolygonGroupID PolygonGroupID = MeshDescription.CreatePolygonGroup();
 
-    // Create vertex instances with attributes
-    TArray<FVertexInstanceID> VertexInstanceIDs;
-    VertexInstanceIDs.SetNum(Vertices.Num());
-
-    TVertexInstanceAttributesRef<FVector3f> VertexInstanceNormals = Attributes.GetVertexInstanceNormals();
-    TVertexInstanceAttributesRef<FVector3f> VertexInstanceTangents = Attributes.GetVertexInstanceTangents();
-    TVertexInstanceAttributesRef<float> VertexInstanceBinormalSigns = Attributes.GetVertexInstanceBinormalSigns();
-    TVertexInstanceAttributesRef<FVector2f> VertexInstanceUVs = Attributes.GetVertexInstanceUVs();
-
-    // Initialize UV channels
-    VertexInstanceUVs.SetNumChannels(1);
-
-    for (int32 i = 0; i < Vertices.Num(); i++)
-    {
-        FVertexInstanceID InstanceID = MeshDescription->CreateVertexInstance(VertexIDs[i]);
-
-        // Set normals
-        VertexInstanceNormals[InstanceID] = FVector3f(Normals[i].GetSafeNormal());
-
-        // Set UVs
-        if (UVs.IsValidIndex(i))
-        {
-            VertexInstanceUVs.Set(InstanceID, 0, FVector2f(UVs[i]));
-        }
-
-        // Set tangents and binormal signs if available
-        if (Tangents.IsValidIndex(i) && Bitangents.IsValidIndex(i))
-        {
-            VertexInstanceTangents[InstanceID] = FVector3f(Tangents[i]);
-
-            // Calculate proper binormal sign
-            float BinormalSign = (FVector::DotProduct(
-                FVector::CrossProduct(Normals[i], Tangents[i]),
-                Bitangents[i]
-            ) < 0) ? -1.0f : 1.0f;
-            VertexInstanceBinormalSigns[InstanceID] = BinormalSign;
-        }
-
-        VertexInstanceIDs[i] = InstanceID;
-    }
-
-    // Create triangles
     for (int32 i = 0; i < Triangles.Num(); i += 3)
     {
-        TArray<FVertexInstanceID> TriangleVertices;
-        TriangleVertices.Add(VertexInstanceIDs[Triangles[i]]);
-        TriangleVertices.Add(VertexInstanceIDs[Triangles[i + 1]]);
-        TriangleVertices.Add(VertexInstanceIDs[Triangles[i + 2]]);
+        TArray<FVertexInstanceID> VertexInstanceIDs;
+        for (int32 j = 0; j < 3; ++j)
+        {
+            int32 Index = Triangles[i + j];
+            FVertexInstanceID InstanceID = MeshDescription.CreateVertexInstance(IndexToVertex[Index]);
 
-        MeshDescription->CreateTriangle(PolygonGroupID, TriangleVertices);
+            if (Normals.IsValidIndex(Index))
+                Attributes.GetVertexInstanceNormals()[InstanceID] = FVector3f(Normals[Index]);
+
+            if (UVs.IsValidIndex(Index))
+                Attributes.GetVertexInstanceUVs()[InstanceID] = FVector2f(UVs[Index]);
+
+            if (Tangents.IsValidIndex(Index))
+                Attributes.GetVertexInstanceTangents()[InstanceID] = FVector3f(Tangents[Index]);
+
+            if (Bitangents.IsValidIndex(Index) && Normals.IsValidIndex(Index))
+            {
+                float Sign = FVector::DotProduct(
+                    FVector::CrossProduct(Normals[Index], Tangents[Index]),
+                    Bitangents[Index]) < 0 ? -1.0f : 1.0f;
+                Attributes.GetVertexInstanceBinormalSigns()[InstanceID] = Sign;
+            }
+
+            VertexInstanceIDs.Add(InstanceID);
+        }
+
+        MeshDescription.CreatePolygon(PolygonGroupID, VertexInstanceIDs);
     }
 
-    StaticMesh->CommitMeshDescription(0);
+    // Now use BuildFromMeshDescriptions instead of SetMeshDescription
+    TArray<const FMeshDescription*> MeshDescArray;
+    MeshDescArray.Add(&MeshDescription);
 
-    // Build mesh
-    StaticMesh->Build();
-
-    // Set up collision
-    if (UBodySetup* BodySetup = StaticMesh->GetBodySetup())
-    {
-        BodySetup->CollisionTraceFlag = ECollisionTraceFlag::CTF_UseDefault;
-        BodySetup->CreatePhysicsMeshes();
-    }
-
-    StaticMesh->PostEditChange();
+    UStaticMesh* StaticMesh = NewObject<UStaticMesh>(GetTransientPackage(), NAME_None, RF_Transient);
+    StaticMesh->BuildFromMeshDescriptions(MeshDescArray);
 
     return StaticMesh;
 }
+
+
 
 
 FTransform AMeshLoader::ConvertAssimpMatrix(const aiMatrix4x4& AssimpMatrix)
@@ -424,7 +393,7 @@ UMaterialInstanceDynamic* AMeshLoader::CreateMaterialFromAssimp(aiMaterial* Assi
                 }
                 else
                 {
-                  
+
                     FString FullPath = FPaths::Combine(BaseDir, Path);
                     FPaths::NormalizeFilename(FullPath);  // ✅ fix mixed slashes
                     if (!FPaths::FileExists(FullPath))
