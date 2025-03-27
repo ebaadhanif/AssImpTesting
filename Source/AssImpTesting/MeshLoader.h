@@ -20,8 +20,8 @@ class ASSIMPTESTING_API AMeshLoader : public AActor
 public:
     AMeshLoader();
 
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "FBX Import")
-    FString FBXFilePath = TEXT("C:/Users/ebaad.hanif/Desktop/FBX Models/car.fbx");
+    UFUNCTION(BlueprintCallable, Category = "FBX Import")
+    void LoadFBXFilesFromFolder(const FString& FbxFolderPath);
 
     UPROPERTY()
     TArray<UStaticMesh*> LoadedMeshes;
@@ -32,20 +32,21 @@ public:
     UFUNCTION(BlueprintCallable, Category = "FBX Import")
     void LoadFBXModel(const FString& FilePath);
 
+    void ProcessNode(aiNode* Node, const aiScene* Scene, const FTransform& ParentTransform, const FString& FilePath);
+
+    void ProcessMesh(aiMesh* Mesh, const aiScene* Scene, const FTransform& Transform, const FString& FilePath);
+
 protected:
     virtual void BeginPlay() override;
 
 private:
     UPROPERTY()
     UStaticMeshComponent* StaticMeshComponent;
-    void ProcessNode(aiNode* Node, const aiScene* Scene, const FTransform& ParentTransform);
-    void ProcessMesh(aiMesh* Mesh, const aiScene* Scene, const FTransform& Transform);
     void CreateProceduralMesh(const TArray<FVector>& Vertices, const TArray<int32>& Triangles, const TArray<FVector>& Normals, const TArray<FVector2D>& UVs, const TArray<FVector>& Tangents, const TArray<FVector>& Bitangents, UMaterialInterface* Material, const FTransform& Transform);
     FTransform ConvertAssimpMatrix(const aiMatrix4x4& AssimpMatrix);
-    UMaterialInstanceDynamic* CreateMaterialFromAssimp(aiMaterial* AssimpMaterial, const aiScene* Scene);
     UTexture2D* CreateTextureFromEmbedded(const aiTexture* EmbeddedTex, const FString& DebugName);
-    FString ResolveTexturePath(const FString& TexturePath);
     UTexture2D* LoadTextureFromDisk(const FString& FilePath);
+    UMaterialInstanceDynamic* CreateMaterialFromAssimp(aiMaterial* AssimpMaterial, const aiScene* Scene, const FString& FilePath);
     void LoadMasterMaterial();
     UMaterial* MasterMaterial = nullptr;
 };

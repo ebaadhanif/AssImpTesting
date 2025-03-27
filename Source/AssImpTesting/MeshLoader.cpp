@@ -23,8 +23,33 @@ AMeshLoader::AMeshLoader()
 void AMeshLoader::BeginPlay()
 {
     Super::BeginPlay();
-    LoadFBXModel(FBXFilePath);
+    LoadFBXFilesFromFolder("C:/Users/ebaad.hanif/Desktop/FBX Models");
 }
+
+void AMeshLoader::LoadFBXFilesFromFolder(const FString& FbxFolderPath)
+{
+    FString SearchPath = FbxFolderPath / TEXT("*.fbx");
+    TArray<FString> FoundFiles;
+
+    IFileManager& FileManager = IFileManager::Get();
+    FileManager.FindFiles(FoundFiles, *SearchPath, true, false);
+
+    if (FoundFiles.Num() == 0)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("No FBX files found in folder: %s"), *FbxFolderPath);
+        return;
+    }
+
+    for (const FString& FileName : FoundFiles)
+    {
+        FString FullPath = FPaths::Combine(FbxFolderPath, FileName);
+        UE_LOG(LogTemp, Display, TEXT("📦 Loading FBX file: %s"), *FullPath);
+        LoadFBXModel(FullPath);
+    }
+}
+
+
+
 
 void AMeshLoader::LoadFBXModel(const FString& FilePath)
 {
@@ -51,26 +76,26 @@ void AMeshLoader::LoadFBXModel(const FString& FilePath)
         return;
     }
 
-    ProcessNode(Scene->mRootNode, Scene, FTransform::Identity);
+    ProcessNode(Scene->mRootNode, Scene, FTransform::Identity , FilePath);
 }
 
-void AMeshLoader::ProcessNode(aiNode* Node, const aiScene* Scene, const FTransform& ParentTransform)
+void AMeshLoader::ProcessNode(aiNode* Node, const aiScene* Scene, const FTransform& ParentTransform, const FString& FilePath)
 {
     FTransform NodeTransform = ConvertAssimpMatrix(Node->mTransformation) * ParentTransform;
 
     for (unsigned int i = 0; i < Node->mNumMeshes; ++i)
     {
         aiMesh* Mesh = Scene->mMeshes[Node->mMeshes[i]];
-        ProcessMesh(Mesh, Scene, NodeTransform);
+        ProcessMesh(Mesh, Scene, NodeTransform ,FilePath);
     }
 
     for (unsigned int i = 0; i < Node->mNumChildren; ++i)
     {
-        ProcessNode(Node->mChildren[i], Scene, NodeTransform);
+        ProcessNode(Node->mChildren[i], Scene, NodeTransform, FilePath);
     }
 }
 
-void AMeshLoader::ProcessMesh(aiMesh* Mesh, const aiScene* Scene, const FTransform& Transform)
+void AMeshLoader::ProcessMesh(aiMesh* Mesh, const aiScene* Scene, const FTransform& Transform, const FString& FilePath)
 {
     TArray<FVector> Vertices;
     TArray<int32> Triangles;
@@ -117,7 +142,7 @@ void AMeshLoader::ProcessMesh(aiMesh* Mesh, const aiScene* Scene, const FTransfo
     UMaterialInterface* Material = nullptr;
     if (Mesh->mMaterialIndex >= 0 && Scene->mMaterials[Mesh->mMaterialIndex])
     {
-        Material = CreateMaterialFromAssimp(Scene->mMaterials[Mesh->mMaterialIndex], Scene);
+        Material = CreateMaterialFromAssimp(Scene->mMaterials[Mesh->mMaterialIndex], Scene, FilePath);
     }
 
     if (!Material)
@@ -178,26 +203,6 @@ FTransform AMeshLoader::ConvertAssimpMatrix(const aiMatrix4x4& M)
     return FTransform(Rotation, Position, Scale);
 }
 
-FString AMeshLoader::ResolveTexturePath(const FString& TexturePath)
-{
-    if (TexturePath.StartsWith("*"))
-        return FString(); // Embedded handled separately
-
-    FString BaseDir = FPaths::GetPath(FBXFilePath);
-    FString FullPath = FPaths::Combine(BaseDir, TexturePath);
-
-    TArray<FString> Extensions = { "", ".png", ".jpg", ".tga", ".dds" };
-    for (const FString& Ext : Extensions)
-    {
-        if (FPaths::FileExists(FullPath + Ext))
-        {
-            return FullPath + Ext;
-        }
-    }
-
-    return FString();
-}
-
 UTexture2D* AMeshLoader::LoadTextureFromDisk(const FString& FilePath)
 {
     if (!FPaths::FileExists(FilePath)) return nullptr;
@@ -229,7 +234,7 @@ UTexture2D* AMeshLoader::LoadTextureFromDisk(const FString& FilePath)
     return Texture;
 }
 
-UMaterialInstanceDynamic* AMeshLoader::CreateMaterialFromAssimp(aiMaterial* AssimpMaterial, const aiScene* Scene)
+UMaterialInstanceDynamic* AMeshLoader::CreateMaterialFromAssimp(aiMaterial* AssimpMaterial, const aiScene* Scene, const FString& FilePath)
 {
     if (!MasterMaterial)
         LoadMasterMaterial();
@@ -248,7 +253,7 @@ UMaterialInstanceDynamic* AMeshLoader::CreateMaterialFromAssimp(aiMaterial* Assi
     }
 
     LoadedMaterials.Add(MatInstance);
-    const FString BaseDir = FPaths::GetPath(FBXFilePath);
+    const FString BaseDir = FPaths::GetPath(FilePath);
 
     // Handle fallback base color
     aiColor3D DiffuseColor(1.0f, 1.0f, 1.0f);
