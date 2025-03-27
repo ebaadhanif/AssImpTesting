@@ -38,18 +38,14 @@ protected:
 private:
     UPROPERTY()
     UStaticMeshComponent* StaticMeshComponent;
-
     void ProcessNode(aiNode* Node, const aiScene* Scene, const FTransform& ParentTransform);
     void ProcessMesh(aiMesh* Mesh, const aiScene* Scene, const FTransform& Transform);
     void CreateProceduralMesh(const TArray<FVector>& Vertices, const TArray<int32>& Triangles, const TArray<FVector>& Normals, const TArray<FVector2D>& UVs, const TArray<FVector>& Tangents, const TArray<FVector>& Bitangents, UMaterialInterface* Material, const FTransform& Transform);
-   // UStaticMesh* CreateStaticMesh(const TArray<FVector>& Vertices, const TArray<int32>& Triangles, const TArray<FVector>& Normals, const TArray<FVector2D>& UVs, const TArray<FVector>& Tangents, const TArray<FVector>& Bitangents);
     FTransform ConvertAssimpMatrix(const aiMatrix4x4& AssimpMatrix);
     UMaterialInstanceDynamic* CreateMaterialFromAssimp(aiMaterial* AssimpMaterial, const aiScene* Scene);
     UTexture2D* CreateTextureFromEmbedded(const aiTexture* EmbeddedTex, const FString& DebugName);
     FString ResolveTexturePath(const FString& TexturePath);
-    UTexture2D* LoadTextureFromFile(const FString& FullPath);
     UTexture2D* LoadTextureFromDisk(const FString& FilePath);
-
     void LoadMasterMaterial();
     UMaterial* MasterMaterial = nullptr;
 };
