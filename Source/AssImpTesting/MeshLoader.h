@@ -26,15 +26,20 @@ public:
     UFUNCTION(BlueprintCallable, Category = "FBX Import")
     void LoadFBXModel(const FString& FilePath);
 
+    void ProcessNode(aiNode* Node, const aiScene* Scene, AActor* ParentActor, const FString& FilePath);
+
 protected:
     virtual void BeginPlay() override;
 
 private:
-    void ProcessNode(aiNode* Node, const aiScene* Scene, USceneComponent* MyParentComponent, const FString& FilePath);
-    void ProcessMesh(aiMesh* Mesh, const aiScene* Scene, USceneComponent* MyParentComponent, const FString& FilePath, const FTransform& LocalTransform);
-    void CreateProceduralMesh(const TArray<FVector>& Vertices, const TArray<int32>& Triangles, const TArray<FVector>& Normals, const TArray<FVector2D>& UVs, const TArray<FVector>& Tangents, const TArray<FVector>& Bitangents, UMaterialInterface* Material, USceneComponent* MyParentComponent, const FTransform& LocalTransform, const FString& MeshName);
+  
+    
+    void ProcessMesh(aiMesh* Mesh, const aiScene* Scene, AActor* NodeActor, const FString& FilePath, const FTransform& LocalTransform);
+    void CreateProceduralMesh(const TArray<FVector>& Vertices, const TArray<int32>& Triangles, const TArray<FVector>& Normals, const TArray<FVector2D>& UVs, const TArray<FVector>& Tangents, const TArray<FVector>& Bitangents, UMaterialInterface* Material, AActor* OwnerActor, const FTransform& LocalTransform, const FString& MeshName);
+    
+    AActor* CreateNodeActor(aiNode* Node, const aiMatrix4x4& TransformMatrix, AActor* ParentActor);
     FTransform ConvertAssimpMatrix(const aiMatrix4x4& AssimpMatrix);
-    USceneComponent* CreateNodeComponent(aiNode* Node, const aiMatrix4x4& TransformMatrix, USceneComponent* MyParentComponent);
+    
 
     void LoadMasterMaterial();
     bool IsVectorFinite(const FVector& Vec);

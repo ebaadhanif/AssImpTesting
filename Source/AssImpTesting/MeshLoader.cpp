@@ -21,7 +21,7 @@ AMeshLoader::AMeshLoader()
 void AMeshLoader::BeginPlay()
 {
     Super::BeginPlay();
-    LoadFBXFilesFromFolder(TEXT("C:/Users/ebaad.hanif/Desktop/FBX Models"));
+    LoadFBXFilesFromFolder(TEXT("C:/Users/ebaad/OneDrive/Desktop/Fbx Models"));
 }
 
 void AMeshLoader::LoadFBXFilesFromFolder(const FString& FbxFolderPath)
@@ -37,6 +37,10 @@ void AMeshLoader::LoadFBXFilesFromFolder(const FString& FbxFolderPath)
         LoadFBXModel(FullPath);
     }
 }
+
+
+
+
 
 void AMeshLoader::LoadFBXModel(const FString& FilePath)
 {
@@ -61,34 +65,43 @@ void AMeshLoader::LoadFBXModel(const FString& FilePath)
         UE_LOG(LogTemp, Error, TEXT("Assimp failed to load FBX: %s"), *FilePath);
         return;
     }
-
+    // Root actor created and labeled with model name
     RootFBXActor = GetWorld()->SpawnActor<AActor>(AActor::StaticClass(), FTransform::Identity);
     RootFBXActor->SetActorLabel(FPaths::GetBaseFilename(FilePath));
 
-    USceneComponent* SceneRoot = NewObject<USceneComponent>(RootFBXActor);
-    SceneRoot->RegisterComponent();
-    RootFBXActor->SetRootComponent(SceneRoot);
 
-    ProcessNode(Scene->mRootNode, Scene, SceneRoot, FilePath);
+    // ✅ Add root component
+    USceneComponent* ParentRootComponent = NewObject<USceneComponent>(RootFBXActor);
+    ParentRootComponent->RegisterComponent();
+    RootFBXActor->SetRootComponent(ParentRootComponent);
+
+    // ⬇️ Iterate over root node's children and assign them as children of RootFBXActor
+    for (uint32 i = 0; i < Scene->mRootNode->mNumChildren; ++i)
+    {
+        ProcessNode(Scene->mRootNode->mChildren[i], Scene, RootFBXActor, FilePath);
+    }
+
+
 }
 
-void AMeshLoader::ProcessNode(aiNode* Node, const aiScene* Scene, USceneComponent* MyParentComponent, const FString& FilePath)
+void AMeshLoader::ProcessNode(aiNode* Node, const aiScene* Scene, AActor* ParentActor, const FString& FilePath)
 {
-    USceneComponent* ThisComponent = CreateNodeComponent(Node, Node->mTransformation, MyParentComponent);
+    AActor* ThisActor = CreateNodeActor(Node, Node->mTransformation, ParentActor);
 
     for (uint32 i = 0; i < Node->mNumMeshes; ++i)
     {
         aiMesh* Mesh = Scene->mMeshes[Node->mMeshes[i]];
-        ProcessMesh(Mesh, Scene, ThisComponent, FilePath, FTransform::Identity);
+        ProcessMesh(Mesh, Scene, ThisActor, FilePath, FTransform::Identity);
     }
 
     for (uint32 i = 0; i < Node->mNumChildren; ++i)
     {
-        ProcessNode(Node->mChildren[i], Scene, ThisComponent, FilePath);
+        ProcessNode(Node->mChildren[i], Scene, ThisActor, FilePath);
     }
 }
 
-void AMeshLoader::ProcessMesh(aiMesh* Mesh, const aiScene* Scene, USceneComponent* MyParentComponent, const FString& FilePath, const FTransform& LocalTransform)
+
+void AMeshLoader::ProcessMesh(aiMesh* Mesh, const aiScene* Scene, AActor* NodeActor, const FString& FilePath, const FTransform& LocalTransform)
 {
     FString MeshName = UTF8_TO_TCHAR(Mesh->mName.C_Str());
     UE_LOG(LogTemp, Display, TEXT("🛠️ Processing Mesh: %s"), *MeshName);
@@ -135,7 +148,7 @@ void AMeshLoader::ProcessMesh(aiMesh* Mesh, const aiScene* Scene, USceneComponen
         Material = LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
     }
 
-    CreateProceduralMesh(Vertices, Triangles, Normals, UVs, Tangents, Bitangents, Material, MyParentComponent, LocalTransform, MeshName);
+    CreateProceduralMesh(Vertices, Triangles, Normals, UVs, Tangents, Bitangents, Material, NodeActor, LocalTransform, MeshName);
 }
 
 void AMeshLoader::CreateProceduralMesh(
@@ -146,38 +159,30 @@ void AMeshLoader::CreateProceduralMesh(
     const TArray<FVector>& Tangents,
     const TArray<FVector>& Bitangents,
     UMaterialInterface* Material,
-    USceneComponent* MyParentComponent,
+    AActor* OwnerActor,
     const FTransform& LocalTransform,
     const FString& MeshName)
 {
     if (Vertices.Num() == 0 || Triangles.Num() == 0)
-    {
-        UE_LOG(LogTemp, Error, TEXT("❌ No geometry for mesh: %s"), *MeshName);
         return;
-    }
 
     FName ValidName = MeshName.IsEmpty()
-        ? MakeUniqueObjectName(GetTransientPackage(), UProceduralMeshComponent::StaticClass(), TEXT("Mesh"))
+        ? MakeUniqueObjectName(OwnerActor, UProceduralMeshComponent::StaticClass(), TEXT("Mesh"))
         : *MeshName;
 
     UProceduralMeshComponent* ProcMesh = NewObject<UProceduralMeshComponent>(
-        GetTransientPackage(),
+        OwnerActor,
         UProceduralMeshComponent::StaticClass(),
         ValidName,
         RF_Transient
     );
 
-    if (!ProcMesh)
-    {
-        UE_LOG(LogTemp, Error, TEXT("❌ Failed to create ProceduralMeshComponent: %s"), *MeshName);
-        return;
-    }
-
-    ProcMesh->RegisterComponentWithWorld(GetWorld());
-    ProcMesh->AttachToComponent(MyParentComponent, FAttachmentTransformRules::KeepRelativeTransform);
+    ProcMesh->RegisterComponent();
+    ProcMesh->AttachToComponent(OwnerActor->GetRootComponent(), FAttachmentTransformRules::KeepRelativeTransform);
     ProcMesh->SetRelativeTransform(LocalTransform);
-    RootFBXActor->AddInstanceComponent(ProcMesh);
+    OwnerActor->AddInstanceComponent(ProcMesh);
 
+    // Tangents
     TArray<FProcMeshTangent> ProcTangents;
     for (int32 i = 0; i < Tangents.Num(); ++i)
     {
@@ -197,35 +202,60 @@ void AMeshLoader::CreateProceduralMesh(
 
     ProcMesh->SetMaterial(0, Material);
 
-    UE_LOG(LogTemp, Display, TEXT("✅ Created mesh: %s | Verts: %d | Tris: %d"), *MeshName, Vertices.Num(), Triangles.Num());
+    // If no root component yet, assign it
+    if (!OwnerActor->GetRootComponent())
+    {
+        OwnerActor->SetRootComponent(ProcMesh);
+    }
 }
 
-USceneComponent* AMeshLoader::CreateNodeComponent(aiNode* Node, const aiMatrix4x4& TransformMatrix, USceneComponent* MyParentComponent)
+
+AActor* AMeshLoader::CreateNodeActor(aiNode* Node, const aiMatrix4x4& TransformMatrix, AActor* ParentActor)
 {
     FString NodeName = UTF8_TO_TCHAR(Node->mName.C_Str());
-    FName ValidName = NodeName.IsEmpty() ? MakeUniqueObjectName(RootFBXActor, USceneComponent::StaticClass(), TEXT("Node")) : *NodeName;
-
-    USceneComponent* NodeComp = NewObject<USceneComponent>(RootFBXActor, USceneComponent::StaticClass(), ValidName, RF_Transient);
-    if (!NodeComp)
+    if (NodeName.IsEmpty())
     {
-        UE_LOG(LogTemp, Error, TEXT("❌ Failed to create node: %s"), *NodeName);
-        return nullptr;
+        static int32 UnnamedCounter = 0;
+        NodeName = FString::Printf(TEXT("UnnamedNode_%d"), UnnamedCounter++);
     }
 
-    RootFBXActor->AddInstanceComponent(NodeComp);
-    NodeComp->AttachToComponent(MyParentComponent, FAttachmentTransformRules::KeepRelativeTransform);
-    NodeComp->RegisterComponent();
+    FName ActorName = *NodeName;
 
+    // Spawn actor
+    AActor* NodeActor = GetWorld()->SpawnActor<AActor>(AActor::StaticClass(), FTransform::Identity);
+    NodeActor->SetActorLabel(NodeName);
+
+    // 🔧 Add and set an empty root component
+    USceneComponent* RootComp = NewObject<USceneComponent>(NodeActor);
+    RootComp->RegisterComponent();
+    NodeActor->SetRootComponent(RootComp);
+
+    // ✅ Attach to parent actor, now guaranteed to work
+    if (ParentActor && ParentActor->GetRootComponent())
+    {
+        NodeActor->AttachToActor(ParentActor, FAttachmentTransformRules::KeepRelativeTransform);
+    }
+
+    // Set local transform
     FTransform LocalTransform = ConvertAssimpMatrix(TransformMatrix);
     if (!IsTransformValid(LocalTransform))
     {
-        UE_LOG(LogTemp, Warning, TEXT("⚠️ Node has invalid transform: %s, using Identity"), *NodeName);
+        UE_LOG(LogTemp, Warning, TEXT("⚠️ Invalid transform for node %s, using identity"), *NodeName);
         LocalTransform = FTransform::Identity;
     }
 
-    NodeComp->SetRelativeTransform(LocalTransform);
-    return NodeComp;
+    NodeActor->SetActorRelativeTransform(LocalTransform);
+
+    return NodeActor;
 }
+
+
+
+
+
+
+
+
 
 FTransform AMeshLoader::ConvertAssimpMatrix(const aiMatrix4x4& M)
 {
