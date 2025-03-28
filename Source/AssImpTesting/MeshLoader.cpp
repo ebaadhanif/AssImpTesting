@@ -16,14 +16,12 @@
 AMeshLoader::AMeshLoader()
 {
     PrimaryActorTick.bCanEverTick = false;
-    StaticMeshComponent = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("StaticMeshComponent"));
-    SetRootComponent(StaticMeshComponent);
 }
 
 void AMeshLoader::BeginPlay()
 {
     Super::BeginPlay();
-    LoadFBXFilesFromFolder("C:/Users/ebaad.hanif/Desktop/FBX Models");
+    LoadFBXFilesFromFolder(TEXT("C:/Users/ebaad.hanif/Desktop/FBX Models"));
 }
 
 void AMeshLoader::LoadFBXFilesFromFolder(const FString& FbxFolderPath)
@@ -31,31 +29,20 @@ void AMeshLoader::LoadFBXFilesFromFolder(const FString& FbxFolderPath)
     FString SearchPath = FbxFolderPath / TEXT("*.fbx");
     TArray<FString> FoundFiles;
 
-    IFileManager& FileManager = IFileManager::Get();
-    FileManager.FindFiles(FoundFiles, *SearchPath, true, false);
-
-    if (FoundFiles.Num() == 0)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("No FBX files found in folder: %s"), *FbxFolderPath);
-        return;
-    }
+    IFileManager::Get().FindFiles(FoundFiles, *SearchPath, true, false);
 
     for (const FString& FileName : FoundFiles)
     {
         FString FullPath = FPaths::Combine(FbxFolderPath, FileName);
-        UE_LOG(LogTemp, Display, TEXT("📦 Loading FBX file: %s"), *FullPath);
         LoadFBXModel(FullPath);
     }
 }
-
-
-
 
 void AMeshLoader::LoadFBXModel(const FString& FilePath)
 {
     if (!FPaths::FileExists(FilePath))
     {
-        UE_LOG(LogTemp, Error, TEXT("❌ FBX file not found: %s"), *FilePath);
+        UE_LOG(LogTemp, Error, TEXT("File does not exist: %s"), *FilePath);
         return;
     }
 
@@ -64,73 +51,71 @@ void AMeshLoader::LoadFBXModel(const FString& FilePath)
         aiProcess_Triangulate |
         aiProcess_GenNormals |
         aiProcess_CalcTangentSpace |
-        aiProcess_FlipUVs |
         aiProcess_JoinIdenticalVertices |
         aiProcess_ImproveCacheLocality |
         aiProcess_OptimizeMeshes |
-        aiProcess_PreTransformVertices);
+        aiProcess_FlipUVs);
 
     if (!Scene || !Scene->mRootNode)
     {
-        UE_LOG(LogTemp, Error, TEXT("❌ Failed to load FBX: %s"), *FilePath);
+        UE_LOG(LogTemp, Error, TEXT("Assimp failed to load FBX: %s"), *FilePath);
         return;
     }
 
-    ProcessNode(Scene->mRootNode, Scene, FTransform::Identity , FilePath);
+    RootFBXActor = GetWorld()->SpawnActor<AActor>(AActor::StaticClass(), FTransform::Identity);
+    RootFBXActor->SetActorLabel(FPaths::GetBaseFilename(FilePath));
+
+    USceneComponent* SceneRoot = NewObject<USceneComponent>(RootFBXActor);
+    SceneRoot->RegisterComponent();
+    RootFBXActor->SetRootComponent(SceneRoot);
+
+    ProcessNode(Scene->mRootNode, Scene, SceneRoot, FilePath);
 }
 
-void AMeshLoader::ProcessNode(aiNode* Node, const aiScene* Scene, const FTransform& ParentTransform, const FString& FilePath)
+void AMeshLoader::ProcessNode(aiNode* Node, const aiScene* Scene, USceneComponent* MyParentComponent, const FString& FilePath)
 {
-    FTransform NodeTransform = ConvertAssimpMatrix(Node->mTransformation) * ParentTransform;
+    USceneComponent* ThisComponent = CreateNodeComponent(Node, Node->mTransformation, MyParentComponent);
 
-    for (unsigned int i = 0; i < Node->mNumMeshes; ++i)
+    for (uint32 i = 0; i < Node->mNumMeshes; ++i)
     {
         aiMesh* Mesh = Scene->mMeshes[Node->mMeshes[i]];
-        ProcessMesh(Mesh, Scene, NodeTransform ,FilePath);
+        ProcessMesh(Mesh, Scene, ThisComponent, FilePath, FTransform::Identity);
     }
 
-    for (unsigned int i = 0; i < Node->mNumChildren; ++i)
+    for (uint32 i = 0; i < Node->mNumChildren; ++i)
     {
-        ProcessNode(Node->mChildren[i], Scene, NodeTransform, FilePath);
+        ProcessNode(Node->mChildren[i], Scene, ThisComponent, FilePath);
     }
 }
 
-void AMeshLoader::ProcessMesh(aiMesh* Mesh, const aiScene* Scene, const FTransform& Transform, const FString& FilePath)
+void AMeshLoader::ProcessMesh(aiMesh* Mesh, const aiScene* Scene, USceneComponent* MyParentComponent, const FString& FilePath, const FTransform& LocalTransform)
 {
-    TArray<FVector> Vertices;
+    FString MeshName = UTF8_TO_TCHAR(Mesh->mName.C_Str());
+    UE_LOG(LogTemp, Display, TEXT("🛠️ Processing Mesh: %s"), *MeshName);
+
+    TArray<FVector> Vertices, Normals, Tangents, Bitangents;
     TArray<int32> Triangles;
-    TArray<FVector> Normals;
     TArray<FVector2D> UVs;
-    TArray<FVector> Tangents;
-    TArray<FVector> Bitangents;
 
-    for (unsigned int i = 0; i < Mesh->mNumVertices; ++i)
+    for (uint32 i = 0; i < Mesh->mNumVertices; ++i)
     {
-        FVector Position(Mesh->mVertices[i].x, Mesh->mVertices[i].z, Mesh->mVertices[i].y);
-        Vertices.Add(Position);
+        Vertices.Add(FVector(Mesh->mVertices[i].x, Mesh->mVertices[i].z, Mesh->mVertices[i].y));
+        Normals.Add(FVector(Mesh->mNormals[i].x, Mesh->mNormals[i].z, Mesh->mNormals[i].y).GetSafeNormal());
 
-        FVector Normal(Mesh->mNormals[i].x, Mesh->mNormals[i].z, Mesh->mNormals[i].y);
-        Normals.Add(Normal.GetSafeNormal());
-
-        FVector2D UV(0, 0);
-        if (Mesh->HasTextureCoords(0))
-        {
-            UV = FVector2D(Mesh->mTextureCoords[0][i].x, Mesh->mTextureCoords[0][i].y);
-        }
-        UVs.Add(UV);
+        UVs.Add(Mesh->HasTextureCoords(0)
+            ? FVector2D(Mesh->mTextureCoords[0][i].x, Mesh->mTextureCoords[0][i].y)
+            : FVector2D::ZeroVector);
 
         if (Mesh->HasTangentsAndBitangents())
         {
-            FVector Tangent(Mesh->mTangents[i].x, -Mesh->mTangents[i].z, Mesh->mTangents[i].y);
-            FVector Bitangent(Mesh->mBitangents[i].x, -Mesh->mBitangents[i].z, Mesh->mBitangents[i].y);
-            Tangents.Add(Tangent);
-            Bitangents.Add(Bitangent);
+            Tangents.Add(FVector(Mesh->mTangents[i].x, -Mesh->mTangents[i].z, Mesh->mTangents[i].y));
+            Bitangents.Add(FVector(Mesh->mBitangents[i].x, -Mesh->mBitangents[i].z, Mesh->mBitangents[i].y));
         }
     }
 
-    for (unsigned int i = 0; i < Mesh->mNumFaces; ++i)
+    for (uint32 i = 0; i < Mesh->mNumFaces; ++i)
     {
-        aiFace Face = Mesh->mFaces[i];
+        aiFace& Face = Mesh->mFaces[i];
         if (Face.mNumIndices == 3)
         {
             Triangles.Add(Face.mIndices[0]);
@@ -150,7 +135,7 @@ void AMeshLoader::ProcessMesh(aiMesh* Mesh, const aiScene* Scene, const FTransfo
         Material = LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
     }
 
-    CreateProceduralMesh(Vertices, Triangles, Normals, UVs, Tangents, Bitangents, Material, Transform);
+    CreateProceduralMesh(Vertices, Triangles, Normals, UVs, Tangents, Bitangents, Material, MyParentComponent, LocalTransform, MeshName);
 }
 
 void AMeshLoader::CreateProceduralMesh(
@@ -161,12 +146,37 @@ void AMeshLoader::CreateProceduralMesh(
     const TArray<FVector>& Tangents,
     const TArray<FVector>& Bitangents,
     UMaterialInterface* Material,
-    const FTransform& Transform)
+    USceneComponent* MyParentComponent,
+    const FTransform& LocalTransform,
+    const FString& MeshName)
 {
-    AActor* NewActor = GetWorld()->SpawnActor<AActor>(AActor::StaticClass(), Transform);
-    UProceduralMeshComponent* ProcMesh = NewObject<UProceduralMeshComponent>(NewActor);
-    ProcMesh->RegisterComponent();
-    NewActor->SetRootComponent(ProcMesh);
+    if (Vertices.Num() == 0 || Triangles.Num() == 0)
+    {
+        UE_LOG(LogTemp, Error, TEXT("❌ No geometry for mesh: %s"), *MeshName);
+        return;
+    }
+
+    FName ValidName = MeshName.IsEmpty()
+        ? MakeUniqueObjectName(GetTransientPackage(), UProceduralMeshComponent::StaticClass(), TEXT("Mesh"))
+        : *MeshName;
+
+    UProceduralMeshComponent* ProcMesh = NewObject<UProceduralMeshComponent>(
+        GetTransientPackage(),
+        UProceduralMeshComponent::StaticClass(),
+        ValidName,
+        RF_Transient
+    );
+
+    if (!ProcMesh)
+    {
+        UE_LOG(LogTemp, Error, TEXT("❌ Failed to create ProceduralMeshComponent: %s"), *MeshName);
+        return;
+    }
+
+    ProcMesh->RegisterComponentWithWorld(GetWorld());
+    ProcMesh->AttachToComponent(MyParentComponent, FAttachmentTransformRules::KeepRelativeTransform);
+    ProcMesh->SetRelativeTransform(LocalTransform);
+    RootFBXActor->AddInstanceComponent(ProcMesh);
 
     TArray<FProcMeshTangent> ProcTangents;
     for (int32 i = 0; i < Tangents.Num(); ++i)
@@ -182,10 +192,39 @@ void AMeshLoader::CreateProceduralMesh(
         UVs,
         TArray<FLinearColor>(),
         ProcTangents,
-        true);
+        true
+    );
 
     ProcMesh->SetMaterial(0, Material);
-    UE_LOG(LogTemp, Display, TEXT("✅ Spawned Procedural Mesh at %s"), *Transform.GetLocation().ToString());
+
+    UE_LOG(LogTemp, Display, TEXT("✅ Created mesh: %s | Verts: %d | Tris: %d"), *MeshName, Vertices.Num(), Triangles.Num());
+}
+
+USceneComponent* AMeshLoader::CreateNodeComponent(aiNode* Node, const aiMatrix4x4& TransformMatrix, USceneComponent* MyParentComponent)
+{
+    FString NodeName = UTF8_TO_TCHAR(Node->mName.C_Str());
+    FName ValidName = NodeName.IsEmpty() ? MakeUniqueObjectName(RootFBXActor, USceneComponent::StaticClass(), TEXT("Node")) : *NodeName;
+
+    USceneComponent* NodeComp = NewObject<USceneComponent>(RootFBXActor, USceneComponent::StaticClass(), ValidName, RF_Transient);
+    if (!NodeComp)
+    {
+        UE_LOG(LogTemp, Error, TEXT("❌ Failed to create node: %s"), *NodeName);
+        return nullptr;
+    }
+
+    RootFBXActor->AddInstanceComponent(NodeComp);
+    NodeComp->AttachToComponent(MyParentComponent, FAttachmentTransformRules::KeepRelativeTransform);
+    NodeComp->RegisterComponent();
+
+    FTransform LocalTransform = ConvertAssimpMatrix(TransformMatrix);
+    if (!IsTransformValid(LocalTransform))
+    {
+        UE_LOG(LogTemp, Warning, TEXT("⚠️ Node has invalid transform: %s, using Identity"), *NodeName);
+        LocalTransform = FTransform::Identity;
+    }
+
+    NodeComp->SetRelativeTransform(LocalTransform);
+    return NodeComp;
 }
 
 FTransform AMeshLoader::ConvertAssimpMatrix(const aiMatrix4x4& M)
@@ -197,11 +236,25 @@ FTransform AMeshLoader::ConvertAssimpMatrix(const aiMatrix4x4& M)
         FPlane(M.d1, M.d2, M.d3, M.d4)
     );
 
-    FVector Position = FVector(Matrix.M[3][0], Matrix.M[3][1], Matrix.M[3][2]);
+    FVector Location = FVector(Matrix.M[3][0], Matrix.M[3][1], Matrix.M[3][2]);
     FVector Scale = Matrix.GetScaleVector();
-    FQuat Rotation = FQuat(Matrix);
-    return FTransform(Rotation, Position, Scale);
+    FRotator Rotator = Matrix.Rotator();
+    FQuat Rotation = FQuat(Rotator);
+    FTransform Result(Rotation, Location, Scale);
+
+    return Result;
 }
+
+bool IsVectorFinite(const FVector& Vec)
+{
+    return FMath::IsFinite(Vec.X) && FMath::IsFinite(Vec.Y) && FMath::IsFinite(Vec.Z);
+}
+
+bool IsTransformValid(const FTransform& Transform)
+{
+    return IsVectorFinite(Transform.GetLocation()) && IsVectorFinite(Transform.GetScale3D());
+}
+
 
 UTexture2D* AMeshLoader::LoadTextureFromDisk(const FString& FilePath)
 {
@@ -406,4 +459,15 @@ void AMeshLoader::LoadMasterMaterial()
         MasterMaterial = LoadObject<UMaterial>(nullptr,
             TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
     }
+}
+
+bool AMeshLoader::IsVectorFinite(const FVector& Vec)
+{
+    return FMath::IsFinite(Vec.X) && FMath::IsFinite(Vec.Y) && FMath::IsFinite(Vec.Z);
+}
+
+
+bool AMeshLoader::IsTransformValid(const FTransform& Transform)
+{
+    return IsVectorFinite(Transform.GetLocation()) && IsVectorFinite(Transform.GetScale3D());
 }
