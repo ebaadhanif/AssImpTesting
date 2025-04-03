@@ -25,7 +25,8 @@ void AMeshLoader::BeginPlay() {
 
 void AMeshLoader::LoadFBXFilesFromFolder(const FString& Folder) {
     TArray<FString> Files;
-    IFileManager::Get().FindFiles(Files, *(Folder / TEXT("*.fbx")), true, false);
+    //IFileManager::Get().FindFiles(Files, *(Folder / TEXT("*.fbx")), true, false);
+    IFileManager::Get().FindFiles(Files, *(Folder / TEXT("*.glb")), true, false);
     for (const FString& File : Files) {
         LoadFBXModel(FPaths::Combine(Folder, File));
     }
@@ -63,6 +64,11 @@ void AMeshLoader::LoadFBXModel(const FString& FilePath)
 void AMeshLoader::ParseNode(aiNode* Node, const aiScene* Scene, FFBXNodeData& OutNode, const FString& FilePath) {
     OutNode.Name = UTF8_TO_TCHAR(Node->mName.C_Str());
     OutNode.Transform = ConvertAssimpMatrix(Node->mTransformation);
+    if (FilePath.EndsWith(".glb") || FilePath.EndsWith(".gltf"))
+    {
+        OutNode.Transform.SetScale3D(FVector(100.0f)); // adjust accordingly
+    }
+
 
     for (uint32 i = 0; i < Node->mNumMeshes; ++i) {
         aiMesh* Mesh = Scene->mMeshes[Node->mMeshes[i]];
@@ -259,13 +265,26 @@ UTexture2D* AMeshLoader::CreateTextureFromEmbedded(const aiTexture* EmbeddedTex,
         return nullptr;
     }
 
-    if (EmbeddedTex->mHeight == 0) // Compressed (e.g., PNG, JPG)
+    if (EmbeddedTex->mHeight == 0) // Compressed texture (PNG, JPG, etc.)
     {
         const uint8* CompressedData = reinterpret_cast<const uint8*>(EmbeddedTex->pcData);
         int32 DataSize = EmbeddedTex->mWidth;
 
+        if (!CompressedData || DataSize <= 0)
+        {
+            UE_LOG(LogTemp, Error, TEXT("❌ Invalid compressed embedded texture data: %s"), *DebugName);
+            return nullptr;
+        }
+
         IImageWrapperModule& ImageWrapperModule = FModuleManager::LoadModuleChecked<IImageWrapperModule>("ImageWrapper");
         EImageFormat Format = ImageWrapperModule.DetectImageFormat(CompressedData, DataSize);
+
+        if (Format == EImageFormat::Invalid)
+        {
+            UE_LOG(LogTemp, Error, TEXT("❌ Invalid image format in embedded texture: %s"), *DebugName);
+            return nullptr;
+        }
+
         TSharedPtr<IImageWrapper> ImageWrapper = ImageWrapperModule.CreateImageWrapper(Format);
 
         if (ImageWrapper.IsValid() && ImageWrapper->SetCompressed(CompressedData, DataSize))
@@ -276,31 +295,62 @@ UTexture2D* AMeshLoader::CreateTextureFromEmbedded(const aiTexture* EmbeddedTex,
                 int32 Width = ImageWrapper->GetWidth();
                 int32 Height = ImageWrapper->GetHeight();
 
-                UTexture2D* Texture = UTexture2D::CreateTransient(Width, Height);
-                if (!Texture) return nullptr;
+                if (Width <= 0 || Height <= 0 || RawData.Num() != Width * Height * 4)
+                {
+                    UE_LOG(LogTemp, Error, TEXT("❌ Invalid image data size for embedded texture: %s"), *DebugName);
+                    return nullptr;
+                }
 
-                void* TextureData = Texture->GetPlatformData()->Mips[0].BulkData.Lock(LOCK_READ_WRITE);
+                UTexture2D* Texture = UTexture2D::CreateTransient(Width, Height, PF_B8G8R8A8);
+                if (!Texture)
+                {
+                    UE_LOG(LogTemp, Error, TEXT("❌ Failed to create texture object: %s"), *DebugName);
+                    return nullptr;
+                }
+
+                Texture->MipGenSettings = TMGS_NoMipmaps;
+                Texture->SRGB = true;
+
+                // Safe locking and copying
+                FTexture2DMipMap& Mip = Texture->GetPlatformData()->Mips[0];
+                void* TextureData = Mip.BulkData.Lock(LOCK_READ_WRITE);
                 FMemory::Memcpy(TextureData, RawData.GetData(), RawData.Num());
-                Texture->GetPlatformData()->Mips[0].BulkData.Unlock();
+                Mip.BulkData.Unlock();
 
                 Texture->UpdateResource();
+
+                // Don’t rename before UpdateResource
                 Texture->SetFlags(RF_Transient);
-                Texture->Rename(*DebugName);
+                Texture->AddToRoot(); // Optional: Prevent GC
+                UE_LOG(LogTemp, Display, TEXT("✅ Embedded texture created: %s (%dx%d)"), *DebugName, Width, Height);
                 return Texture;
+            }
+            else
+            {
+                UE_LOG(LogTemp, Error, TEXT("❌ Failed to decode raw data for: %s"), *DebugName);
             }
         }
 
-        UE_LOG(LogTemp, Warning, TEXT("Failed to decode embedded compressed texture: %s"), *DebugName);
+        else
+        {
+            UE_LOG(LogTemp, Error, TEXT("❌ Failed to parse compressed embedded texture: %s"), *DebugName);
+        }
     }
-    else // Raw RGBA texture
+    else // Uncompressed raw RGBA texture (rare)
     {
         int32 Width = EmbeddedTex->mWidth;
         int32 Height = EmbeddedTex->mHeight;
 
+        if (Width <= 0 || Height <= 0)
+        {
+            UE_LOG(LogTemp, Error, TEXT("❌ Invalid raw texture dimensions for %s: %dx%d"), *DebugName, Width, Height);
+            return nullptr;
+        }
+
         UTexture2D* Texture = UTexture2D::CreateTransient(Width, Height);
         if (!Texture)
         {
-            UE_LOG(LogTemp, Warning, TEXT("Failed to create raw embedded texture: %s"), *DebugName);
+            UE_LOG(LogTemp, Error, TEXT("❌ Failed to create raw texture object: %s"), *DebugName);
             return nullptr;
         }
 
@@ -311,11 +361,14 @@ UTexture2D* AMeshLoader::CreateTextureFromEmbedded(const aiTexture* EmbeddedTex,
         Texture->UpdateResource();
         Texture->SetFlags(RF_Transient);
         Texture->Rename(*DebugName);
+
         return Texture;
     }
 
+    UE_LOG(LogTemp, Warning, TEXT("⚠️ Unknown format or failed to create embedded texture: %s"), *DebugName);
     return nullptr;
 }
+
 
 UTexture2D* AMeshLoader::LoadTextureFromDisk(const FString& FilePath)
 {
