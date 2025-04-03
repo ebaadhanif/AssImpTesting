@@ -13,43 +13,26 @@
 #include "Misc/FileHelper.h"
 #include "Materials/MaterialInstanceDynamic.h"
 
-AMeshLoader::AMeshLoader()
-{
+AMeshLoader::AMeshLoader() {
     PrimaryActorTick.bCanEverTick = false;
 }
 
-void AMeshLoader::BeginPlay()
-{
+void AMeshLoader::BeginPlay() {
     Super::BeginPlay();
-    LoadFBXFilesFromFolder(TEXT("C:/Users/ebaad/OneDrive/Desktop/Fbx Models"));
+    LoadFBXFilesFromFolder(TEXT("C:/Users/ebaad.hanif/Desktop/FBX Models"));
+    SpawnCachedModels();
 }
 
-void AMeshLoader::LoadFBXFilesFromFolder(const FString& FbxFolderPath)
-{
-    FString SearchPath = FbxFolderPath / TEXT("*.fbx");
-    TArray<FString> FoundFiles;
-
-    IFileManager::Get().FindFiles(FoundFiles, *SearchPath, true, false);
-
-    for (const FString& FileName : FoundFiles)
-    {
-        FString FullPath = FPaths::Combine(FbxFolderPath, FileName);
-        LoadFBXModel(FullPath);
+void AMeshLoader::LoadFBXFilesFromFolder(const FString& Folder) {
+    TArray<FString> Files;
+    IFileManager::Get().FindFiles(Files, *(Folder / TEXT("*.fbx")), true, false);
+    for (const FString& File : Files) {
+        LoadFBXModel(FPaths::Combine(Folder, File));
     }
 }
-
-
-
-
 
 void AMeshLoader::LoadFBXModel(const FString& FilePath)
 {
-    if (!FPaths::FileExists(FilePath))
-    {
-        UE_LOG(LogTemp, Error, TEXT("File does not exist: %s"), *FilePath);
-        return;
-    }
-
     Assimp::Importer Importer;
     const aiScene* Scene = Importer.ReadFile(TCHAR_TO_UTF8(*FilePath),
         aiProcess_Triangulate |
@@ -62,259 +45,115 @@ void AMeshLoader::LoadFBXModel(const FString& FilePath)
 
     if (!Scene || !Scene->mRootNode)
     {
-        UE_LOG(LogTemp, Error, TEXT("Assimp failed to load FBX: %s"), *FilePath);
+        UE_LOG(LogTemp, Error, TEXT("Failed to load FBX: %s"), *FilePath);
         return;
     }
-    // Root actor created and labeled with model name
-    RootFBXActor = GetWorld()->SpawnActor<AActor>(AActor::StaticClass(), FTransform::Identity);
-    RootFBXActor->SetActorLabel(FPaths::GetBaseFilename(FilePath));
+
+    FFBXModelData Model;
+    Model.ModelName = FPaths::GetBaseFilename(FilePath);
+    Model.FilePath = FilePath;
 
 
-    // ✅ Add root component
-    USceneComponent* ParentRootComponent = NewObject<USceneComponent>(RootFBXActor);
-    ParentRootComponent->RegisterComponent();
-    RootFBXActor->SetRootComponent(ParentRootComponent);
-
-    // ⬇️ Iterate over root node's children and assign them as children of RootFBXActor
-    for (uint32 i = 0; i < Scene->mRootNode->mNumChildren; ++i)
-    {
-        ProcessNode(Scene->mRootNode->mChildren[i], Scene, RootFBXActor, FilePath);
-    }
+    ParseNode(Scene->mRootNode, Scene, Model.RootNode, FilePath);
 
 
+    CachedModels.Add(MoveTemp(Model));
 }
 
-void AMeshLoader::ProcessNode(aiNode* Node, const aiScene* Scene, AActor* ParentActor, const FString& FilePath)
-{
-    AActor* ThisActor = CreateNodeActor(Node, Node->mTransformation, ParentActor);
+void AMeshLoader::ParseNode(aiNode* Node, const aiScene* Scene, FFBXNodeData& OutNode, const FString& FilePath) {
+    OutNode.Name = UTF8_TO_TCHAR(Node->mName.C_Str());
+    OutNode.Transform = ConvertAssimpMatrix(Node->mTransformation);
 
-    for (uint32 i = 0; i < Node->mNumMeshes; ++i)
-    {
+    for (uint32 i = 0; i < Node->mNumMeshes; ++i) {
         aiMesh* Mesh = Scene->mMeshes[Node->mMeshes[i]];
-        ProcessMesh(Mesh, Scene, ThisActor, FilePath, FTransform::Identity);
+        FMeshSectionData MeshData;
+        ExtractMesh(Mesh, Scene, MeshData, FilePath);
+        OutNode.MeshSections.Add(MoveTemp(MeshData));
     }
 
-    for (uint32 i = 0; i < Node->mNumChildren; ++i)
-    {
-        ProcessNode(Node->mChildren[i], Scene, ThisActor, FilePath);
+    for (uint32 i = 0; i < Node->mNumChildren; ++i) {
+        FFBXNodeData ChildNode;
+        ParseNode(Node->mChildren[i], Scene, ChildNode, FilePath);
+        OutNode.Children.Add(MoveTemp(ChildNode));
     }
 }
 
-
-void AMeshLoader::ProcessMesh(aiMesh* Mesh, const aiScene* Scene, AActor* NodeActor, const FString& FilePath, const FTransform& LocalTransform)
-{
-    FString MeshName = UTF8_TO_TCHAR(Mesh->mName.C_Str());
-    UE_LOG(LogTemp, Display, TEXT("🛠️ Processing Mesh: %s"), *MeshName);
-
-    TArray<FVector> Vertices, Normals, Tangents, Bitangents;
-    TArray<int32> Triangles;
-    TArray<FVector2D> UVs;
-
-    for (uint32 i = 0; i < Mesh->mNumVertices; ++i)
-    {
-        Vertices.Add(FVector(Mesh->mVertices[i].x, Mesh->mVertices[i].z, Mesh->mVertices[i].y));
-        Normals.Add(FVector(Mesh->mNormals[i].x, Mesh->mNormals[i].z, Mesh->mNormals[i].y).GetSafeNormal());
-
-        UVs.Add(Mesh->HasTextureCoords(0)
-            ? FVector2D(Mesh->mTextureCoords[0][i].x, Mesh->mTextureCoords[0][i].y)
-            : FVector2D::ZeroVector);
-
-        if (Mesh->HasTangentsAndBitangents())
-        {
-            Tangents.Add(FVector(Mesh->mTangents[i].x, -Mesh->mTangents[i].z, Mesh->mTangents[i].y));
-            Bitangents.Add(FVector(Mesh->mBitangents[i].x, -Mesh->mBitangents[i].z, Mesh->mBitangents[i].y));
+void AMeshLoader::ExtractMesh(aiMesh* Mesh, const aiScene* Scene, FMeshSectionData& OutMesh, const FString& FilePath) {
+    for (uint32 i = 0; i < Mesh->mNumVertices; ++i) {
+        OutMesh.Vertices.Add(FVector(Mesh->mVertices[i].x, Mesh->mVertices[i].z, Mesh->mVertices[i].y));
+        OutMesh.Normals.Add(FVector(Mesh->mNormals[i].x, Mesh->mNormals[i].z, Mesh->mNormals[i].y));
+        OutMesh.UVs.Add(Mesh->HasTextureCoords(0) ? FVector2D(Mesh->mTextureCoords[0][i].x, Mesh->mTextureCoords[0][i].y) : FVector2D::ZeroVector);
+    }
+    for (uint32 i = 0; i < Mesh->mNumFaces; ++i) {
+        const aiFace& Face = Mesh->mFaces[i];
+        if (Face.mNumIndices == 3) {
+            OutMesh.Triangles.Add(Face.mIndices[0]);
+            OutMesh.Triangles.Add(Face.mIndices[1]);
+            OutMesh.Triangles.Add(Face.mIndices[2]);
         }
     }
+    if (Mesh->mMaterialIndex >= 0 && Scene->mMaterials[Mesh->mMaterialIndex]) {
+        OutMesh.Material = CreateMaterialFromAssimp(Scene->mMaterials[Mesh->mMaterialIndex], Scene, FilePath);
+    }
+}
 
-    for (uint32 i = 0; i < Mesh->mNumFaces; ++i)
-    {
-        aiFace& Face = Mesh->mFaces[i];
-        if (Face.mNumIndices == 3)
+void AMeshLoader::SpawnCachedModels() {
+    for (const FFBXModelData& Model : CachedModels) {
+        AActor* RootActor = GetWorld()->SpawnActor<AActor>(AActor::StaticClass());
+#if WITH_EDITOR
+        RootActor->SetActorLabel(Model.ModelName);
+#endif
+        USceneComponent* RootComp = NewObject<USceneComponent>(RootActor);
+        RootComp->RegisterComponent();
+        RootActor->SetRootComponent(RootComp);
+        for (const FFBXNodeData& Child : Model.RootNode.Children)
         {
-            Triangles.Add(Face.mIndices[0]);
-            Triangles.Add(Face.mIndices[1]);
-            Triangles.Add(Face.mIndices[2]);
+            SpawnNodeRecursive(Child, RootActor);
         }
     }
-
-    UMaterialInterface* Material = nullptr;
-    if (Mesh->mMaterialIndex >= 0 && Scene->mMaterials[Mesh->mMaterialIndex])
-    {
-        Material = CreateMaterialFromAssimp(Scene->mMaterials[Mesh->mMaterialIndex], Scene, FilePath);
-    }
-
-    if (!Material)
-    {
-        Material = LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
-    }
-
-    CreateProceduralMesh(Vertices, Triangles, Normals, UVs, Tangents, Bitangents, Material, NodeActor, LocalTransform, MeshName);
 }
 
-void AMeshLoader::CreateProceduralMesh(
-    const TArray<FVector>& Vertices,
-    const TArray<int32>& Triangles,
-    const TArray<FVector>& Normals,
-    const TArray<FVector2D>& UVs,
-    const TArray<FVector>& Tangents,
-    const TArray<FVector>& Bitangents,
-    UMaterialInterface* Material,
-    AActor* OwnerActor,
-    const FTransform& LocalTransform,
-    const FString& MeshName)
-{
-    if (Vertices.Num() == 0 || Triangles.Num() == 0)
-        return;
-
-    FName ValidName = MeshName.IsEmpty()
-        ? MakeUniqueObjectName(OwnerActor, UProceduralMeshComponent::StaticClass(), TEXT("Mesh"))
-        : *MeshName;
-
-    UProceduralMeshComponent* ProcMesh = NewObject<UProceduralMeshComponent>(
-        OwnerActor,
-        UProceduralMeshComponent::StaticClass(),
-        ValidName,
-        RF_Transient
-    );
-
-    ProcMesh->RegisterComponent();
-    ProcMesh->AttachToComponent(OwnerActor->GetRootComponent(), FAttachmentTransformRules::KeepRelativeTransform);
-    ProcMesh->SetRelativeTransform(LocalTransform);
-    OwnerActor->AddInstanceComponent(ProcMesh);
-
-    // Tangents
-    TArray<FProcMeshTangent> ProcTangents;
-    for (int32 i = 0; i < Tangents.Num(); ++i)
-    {
-        ProcTangents.Add(FProcMeshTangent(Tangents[i], false));
-    }
-
-    ProcMesh->CreateMeshSection_LinearColor(
-        0,
-        Vertices,
-        Triangles,
-        Normals,
-        UVs,
-        TArray<FLinearColor>(),
-        ProcTangents,
-        true
-    );
-
-    ProcMesh->SetMaterial(0, Material);
-
-    // If no root component yet, assign it
-    if (!OwnerActor->GetRootComponent())
-    {
-        OwnerActor->SetRootComponent(ProcMesh);
-    }
-}
-
-
-AActor* AMeshLoader::CreateNodeActor(aiNode* Node, const aiMatrix4x4& TransformMatrix, AActor* ParentActor)
-{
-    FString NodeName = UTF8_TO_TCHAR(Node->mName.C_Str());
-    if (NodeName.IsEmpty())
-    {
-        static int32 UnnamedCounter = 0;
-        NodeName = FString::Printf(TEXT("UnnamedNode_%d"), UnnamedCounter++);
-    }
-
-    FName ActorName = *NodeName;
-
-    // Spawn actor
-    AActor* NodeActor = GetWorld()->SpawnActor<AActor>(AActor::StaticClass(), FTransform::Identity);
-    NodeActor->SetActorLabel(NodeName);
-
-    // 🔧 Add and set an empty root component
+void AMeshLoader::SpawnNodeRecursive(const FFBXNodeData& Node, AActor* Parent) {
+    AActor* NodeActor = GetWorld()->SpawnActor<AActor>(AActor::StaticClass());
+#if WITH_EDITOR
+    NodeActor->SetActorLabel(Node.Name);
+#endif
     USceneComponent* RootComp = NewObject<USceneComponent>(NodeActor);
     RootComp->RegisterComponent();
     NodeActor->SetRootComponent(RootComp);
+    NodeActor->AttachToActor(Parent, FAttachmentTransformRules::KeepRelativeTransform);
+    NodeActor->SetActorRelativeTransform(Node.Transform);
 
-    // ✅ Attach to parent actor, now guaranteed to work
-    if (ParentActor && ParentActor->GetRootComponent())
-    {
-        NodeActor->AttachToActor(ParentActor, FAttachmentTransformRules::KeepRelativeTransform);
+    for (const FMeshSectionData& Section : Node.MeshSections) {
+        UProceduralMeshComponent* Mesh = NewObject<UProceduralMeshComponent>(NodeActor);
+        Mesh->RegisterComponent();
+        Mesh->AttachToComponent(RootComp, FAttachmentTransformRules::KeepRelativeTransform);
+        TArray<FProcMeshTangent> Tangents;
+        for (const FVector& Tangent : Section.Tangents) {
+            Tangents.Add(FProcMeshTangent(Tangent, false));
+        }
+        Mesh->CreateMeshSection_LinearColor(0, Section.Vertices, Section.Triangles, Section.Normals, Section.UVs, {}, Tangents, true);
+        Mesh->SetMaterial(0, Section.Material ? Section.Material : LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial")));
     }
-
-    // Set local transform
-    FTransform LocalTransform = ConvertAssimpMatrix(TransformMatrix);
-    if (!IsTransformValid(LocalTransform))
-    {
-        UE_LOG(LogTemp, Warning, TEXT("⚠️ Invalid transform for node %s, using identity"), *NodeName);
-        LocalTransform = FTransform::Identity;
+    for (const FFBXNodeData& Child : Node.Children) {
+        SpawnNodeRecursive(Child, NodeActor);
     }
-
-    NodeActor->SetActorRelativeTransform(LocalTransform);
-
-    return NodeActor;
 }
 
-
-
-
-
-
-
-
-
-FTransform AMeshLoader::ConvertAssimpMatrix(const aiMatrix4x4& M)
-{
+FTransform AMeshLoader::ConvertAssimpMatrix(const aiMatrix4x4& M) {
     FMatrix Matrix(
         FPlane(M.a1, M.a2, M.a3, M.a4),
         FPlane(M.b1, M.b2, M.b3, M.b4),
         FPlane(M.c1, M.c2, M.c3, M.c4),
-        FPlane(M.d1, M.d2, M.d3, M.d4)
-    );
-
-    FVector Location = FVector(Matrix.M[3][0], Matrix.M[3][1], Matrix.M[3][2]);
-    FVector Scale = Matrix.GetScaleVector();
-    FRotator Rotator = Matrix.Rotator();
-    FQuat Rotation = FQuat(Rotator);
-    FTransform Result(Rotation, Location, Scale);
-
-    return Result;
+        FPlane(M.d1, M.d2, M.d3, M.d4));
+    return FTransform(FQuat(Matrix.Rotator()), FVector(Matrix.M[3][0], Matrix.M[3][1], Matrix.M[3][2]), Matrix.GetScaleVector());
 }
 
-bool IsVectorFinite(const FVector& Vec)
-{
-    return FMath::IsFinite(Vec.X) && FMath::IsFinite(Vec.Y) && FMath::IsFinite(Vec.Z);
-}
-
-bool IsTransformValid(const FTransform& Transform)
-{
-    return IsVectorFinite(Transform.GetLocation()) && IsVectorFinite(Transform.GetScale3D());
-}
-
-
-UTexture2D* AMeshLoader::LoadTextureFromDisk(const FString& FilePath)
-{
-    if (!FPaths::FileExists(FilePath)) return nullptr;
-
-    TArray<uint8> FileData;
-    if (!FFileHelper::LoadFileToArray(FileData, *FilePath)) return nullptr;
-
-    IImageWrapperModule& Module = FModuleManager::LoadModuleChecked<IImageWrapperModule>("ImageWrapper");
-    EImageFormat Format = Module.DetectImageFormat(FileData.GetData(), FileData.Num());
-    TSharedPtr<IImageWrapper> Wrapper = Module.CreateImageWrapper(Format);
-
-    if (!Wrapper.IsValid() || !Wrapper->SetCompressed(FileData.GetData(), FileData.Num())) return nullptr;
-
-    TArray64<uint8> RawData;
-    if (!Wrapper->GetRaw(ERGBFormat::BGRA, 8, RawData)) return nullptr;
-
-    int32 Width = Wrapper->GetWidth();
-    int32 Height = Wrapper->GetHeight();
-
-    UTexture2D* Texture = UTexture2D::CreateTransient(Width, Height);
-    if (!Texture) return nullptr;
-
-    void* TextureData = Texture->GetPlatformData()->Mips[0].BulkData.Lock(LOCK_READ_WRITE);
-    FMemory::Memcpy(TextureData, RawData.GetData(), RawData.Num());
-    Texture->GetPlatformData()->Mips[0].BulkData.Unlock();
-
-    Texture->UpdateResource();
-    Texture->SetFlags(RF_Transient);
-    return Texture;
+void AMeshLoader::LoadMasterMaterial() {
+    MasterMaterial = LoadObject<UMaterial>(nullptr, TEXT("/Game/Materials/M_BaseMaterial.M_BaseMaterial"));
+    if (!MasterMaterial) {
+        MasterMaterial = LoadObject<UMaterial>(nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
+    }
 }
 
 UMaterialInstanceDynamic* AMeshLoader::CreateMaterialFromAssimp(aiMaterial* AssimpMaterial, const aiScene* Scene, const FString& FilePath)
@@ -478,17 +317,35 @@ UTexture2D* AMeshLoader::CreateTextureFromEmbedded(const aiTexture* EmbeddedTex,
     return nullptr;
 }
 
-void AMeshLoader::LoadMasterMaterial()
+UTexture2D* AMeshLoader::LoadTextureFromDisk(const FString& FilePath)
 {
-    static const FString MaterialPath = TEXT("/Game/Materials/M_BaseMaterial.M_BaseMaterial");
-    MasterMaterial = LoadObject<UMaterial>(nullptr, *MaterialPath);
+    if (!FPaths::FileExists(FilePath)) return nullptr;
 
-    if (!MasterMaterial)
-    {
-        UE_LOG(LogTemp, Error, TEXT("Failed to load master material at path: %s"), *MaterialPath);
-        MasterMaterial = LoadObject<UMaterial>(nullptr,
-            TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
-    }
+    TArray<uint8> FileData;
+    if (!FFileHelper::LoadFileToArray(FileData, *FilePath)) return nullptr;
+
+    IImageWrapperModule& Module = FModuleManager::LoadModuleChecked<IImageWrapperModule>("ImageWrapper");
+    EImageFormat Format = Module.DetectImageFormat(FileData.GetData(), FileData.Num());
+    TSharedPtr<IImageWrapper> Wrapper = Module.CreateImageWrapper(Format);
+
+    if (!Wrapper.IsValid() || !Wrapper->SetCompressed(FileData.GetData(), FileData.Num())) return nullptr;
+
+    TArray64<uint8> RawData;
+    if (!Wrapper->GetRaw(ERGBFormat::BGRA, 8, RawData)) return nullptr;
+
+    int32 Width = Wrapper->GetWidth();
+    int32 Height = Wrapper->GetHeight();
+
+    UTexture2D* Texture = UTexture2D::CreateTransient(Width, Height);
+    if (!Texture) return nullptr;
+
+    void* TextureData = Texture->GetPlatformData()->Mips[0].BulkData.Lock(LOCK_READ_WRITE);
+    FMemory::Memcpy(TextureData, RawData.GetData(), RawData.Num());
+    Texture->GetPlatformData()->Mips[0].BulkData.Unlock();
+
+    Texture->UpdateResource();
+    Texture->SetFlags(RF_Transient);
+    return Texture;
 }
 
 bool AMeshLoader::IsVectorFinite(const FVector& Vec)
@@ -496,8 +353,12 @@ bool AMeshLoader::IsVectorFinite(const FVector& Vec)
     return FMath::IsFinite(Vec.X) && FMath::IsFinite(Vec.Y) && FMath::IsFinite(Vec.Z);
 }
 
-
 bool AMeshLoader::IsTransformValid(const FTransform& Transform)
 {
     return IsVectorFinite(Transform.GetLocation()) && IsVectorFinite(Transform.GetScale3D());
+}
+
+const TArray<FFBXModelData>& AMeshLoader::GetCachedModels()
+{
+    return CachedModels;
 }
