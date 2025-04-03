@@ -64,7 +64,7 @@ class ASSIMPTESTING_API AMeshLoader : public AActor
 public:
     AMeshLoader();
     UFUNCTION(BlueprintCallable, Category = "FBX Import")
-    void LoadFBXFilesFromFolder(const FString& Folder);
+    void Load_FBXAndGLB_ModelFilesFromFolder(const FString& Folder);
     UFUNCTION(BlueprintCallable, Category = "FBX Import")
     void LoadFBXModel(const FString& FilePath);
     void ParseNode(aiNode* Node, const aiScene* Scene, FFBXNodeData& OutNode, const FString& FilePath);

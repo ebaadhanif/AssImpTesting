@@ -19,15 +19,18 @@ AMeshLoader::AMeshLoader() {
 
 void AMeshLoader::BeginPlay() {
     Super::BeginPlay();
-    LoadFBXFilesFromFolder(TEXT("C:/Users/ebaad.hanif/Desktop/FBX Models"));
+    Load_FBXAndGLB_ModelFilesFromFolder(TEXT("C:/Users/ebaad.hanif/Desktop/FBX Models"));
     SpawnCachedModels();
 }
 
-void AMeshLoader::LoadFBXFilesFromFolder(const FString& Folder) {
-    TArray<FString> Files;
-    //IFileManager::Get().FindFiles(Files, *(Folder / TEXT("*.fbx")), true, false);
-    IFileManager::Get().FindFiles(Files, *(Folder / TEXT("*.glb")), true, false);
-    for (const FString& File : Files) {
+void AMeshLoader::Load_FBXAndGLB_ModelFilesFromFolder(const FString& Folder) {
+    TArray<FString> FbxFiles, GlbFiles;
+    IFileManager::Get().FindFiles(FbxFiles, *(Folder / TEXT("*.fbx")), true, false);
+    IFileManager::Get().FindFiles(GlbFiles, *(Folder / TEXT("*.glb")), true, false);
+    for (const FString& File : FbxFiles) {
+        LoadFBXModel(FPaths::Combine(Folder, File));
+    }
+    for (const FString& File : GlbFiles) {
         LoadFBXModel(FPaths::Combine(Folder, File));
     }
 }
