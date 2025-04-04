@@ -35,10 +35,10 @@ void AMeshLoader::Load_FBXAndGLB_ModelFilesFromFolder(const FString& Folder) {
     }
 }
 
-void AMeshLoader::LoadFBXModel(const FString& FilePath)
+void AMeshLoader::LoadFBXModel(const FString& FbxFilePath)
 {
     Assimp::Importer Importer;
-    const aiScene* Scene = Importer.ReadFile(TCHAR_TO_UTF8(*FilePath),
+    const aiScene* Scene = Importer.ReadFile(TCHAR_TO_UTF8(*FbxFilePath),
         aiProcess_Triangulate |
         aiProcess_GenNormals |
         aiProcess_CalcTangentSpace |
@@ -49,25 +49,25 @@ void AMeshLoader::LoadFBXModel(const FString& FilePath)
 
     if (!Scene || !Scene->mRootNode)
     {
-        UE_LOG(LogTemp, Error, TEXT("Failed to load FBX: %s"), *FilePath);
+        UE_LOG(LogTemp, Error, TEXT("Failed to load FBX: %s"), *FbxFilePath);
         return;
     }
 
     FFBXModelData Model;
-    Model.ModelName = FPaths::GetBaseFilename(FilePath);
-    Model.FilePath = FilePath;
+    Model.ModelName = FPaths::GetBaseFilename(FbxFilePath);
+    Model.FbxFilePath = FbxFilePath;
 
 
-    ParseNode(Scene->mRootNode, Scene, Model.RootNode, FilePath);
+    ParseNode(Scene->mRootNode, Scene, Model.RootNode, FbxFilePath);
 
 
     CachedModels.Add(MoveTemp(Model));
 }
 
-void AMeshLoader::ParseNode(aiNode* Node, const aiScene* Scene, FFBXNodeData& OutNode, const FString& FilePath) {
+void AMeshLoader::ParseNode(aiNode* Node, const aiScene* Scene, FFBXNodeData& OutNode, const FString& FbxFilePath) {
     OutNode.Name = UTF8_TO_TCHAR(Node->mName.C_Str());
     OutNode.Transform = ConvertAssimpMatrix(Node->mTransformation);
-    if (FilePath.EndsWith(".glb") || FilePath.EndsWith(".gltf"))
+    if (FbxFilePath.EndsWith(".glb") || FbxFilePath.EndsWith(".gltf"))
     {
         OutNode.Transform.SetScale3D(FVector(100.0f)); // adjust accordingly
     }
@@ -76,18 +76,18 @@ void AMeshLoader::ParseNode(aiNode* Node, const aiScene* Scene, FFBXNodeData& Ou
     for (uint32 i = 0; i < Node->mNumMeshes; ++i) {
         aiMesh* Mesh = Scene->mMeshes[Node->mMeshes[i]];
         FMeshSectionData MeshData;
-        ExtractMesh(Mesh, Scene, MeshData, FilePath);
+        ExtractMesh(Mesh, Scene, MeshData, FbxFilePath);
         OutNode.MeshSections.Add(MoveTemp(MeshData));
     }
 
     for (uint32 i = 0; i < Node->mNumChildren; ++i) {
         FFBXNodeData ChildNode;
-        ParseNode(Node->mChildren[i], Scene, ChildNode, FilePath);
+        ParseNode(Node->mChildren[i], Scene, ChildNode, FbxFilePath);
         OutNode.Children.Add(MoveTemp(ChildNode));
     }
 }
 
-void AMeshLoader::ExtractMesh(aiMesh* Mesh, const aiScene* Scene, FMeshSectionData& OutMesh, const FString& FilePath) {
+void AMeshLoader::ExtractMesh(aiMesh* Mesh, const aiScene* Scene, FMeshSectionData& OutMesh, const FString& FbxFilePath) {
     for (uint32 i = 0; i < Mesh->mNumVertices; ++i) {
         OutMesh.Vertices.Add(FVector(Mesh->mVertices[i].x, Mesh->mVertices[i].z, Mesh->mVertices[i].y));
         OutMesh.Normals.Add(FVector(Mesh->mNormals[i].x, Mesh->mNormals[i].z, Mesh->mNormals[i].y));
@@ -102,7 +102,7 @@ void AMeshLoader::ExtractMesh(aiMesh* Mesh, const aiScene* Scene, FMeshSectionDa
         }
     }
     if (Mesh->mMaterialIndex >= 0 && Scene->mMaterials[Mesh->mMaterialIndex]) {
-        OutMesh.Material = CreateMaterialFromAssimp(Scene->mMaterials[Mesh->mMaterialIndex], Scene, FilePath);
+        OutMesh.Material = CreateMaterialFromAssimp(Scene->mMaterials[Mesh->mMaterialIndex], Scene, FbxFilePath);
     }
 }
 
@@ -165,7 +165,7 @@ void AMeshLoader::LoadMasterMaterial() {
     }
 }
 
-UMaterialInstanceDynamic* AMeshLoader::CreateMaterialFromAssimp(aiMaterial* AssimpMaterial, const aiScene* Scene, const FString& FilePath)
+UMaterialInstanceDynamic* AMeshLoader::CreateMaterialFromAssimp(aiMaterial* AssimpMaterial, const aiScene* Scene, const FString& FbxFilePath)
 {
     if (!MasterMaterial)
         LoadMasterMaterial();
@@ -184,7 +184,7 @@ UMaterialInstanceDynamic* AMeshLoader::CreateMaterialFromAssimp(aiMaterial* Assi
     }
 
     LoadedMaterials.Add(MatInstance);
-    const FString BaseDir = FPaths::GetPath(FilePath);
+    const FString BaseDir = FPaths::GetPath(FbxFilePath);
 
     // Handle fallback base color
     aiColor3D DiffuseColor(1.0f, 1.0f, 1.0f);
@@ -206,7 +206,7 @@ UMaterialInstanceDynamic* AMeshLoader::CreateMaterialFromAssimp(aiMaterial* Assi
                 if (Path.StartsWith(TEXT("*")))
                 {
                     const aiTexture* Embedded = Scene->GetEmbeddedTexture(TexPath.C_Str());
-                    Texture = CreateTextureFromEmbedded(Embedded, Path);
+                    Texture = CreateTextureFromEmbedded(Embedded, Path, Type);
                 }
                 else
                 {
@@ -260,7 +260,8 @@ UMaterialInstanceDynamic* AMeshLoader::CreateMaterialFromAssimp(aiMaterial* Assi
     return MatInstance;
 }
 
-UTexture2D* AMeshLoader::CreateTextureFromEmbedded(const aiTexture* EmbeddedTex, const FString& DebugName)
+UTexture2D* AMeshLoader::CreateTextureFromEmbedded(const aiTexture* EmbeddedTex, const FString& DebugName, aiTextureType Type)
+
 {
     if (!EmbeddedTex)
     {
@@ -311,8 +312,20 @@ UTexture2D* AMeshLoader::CreateTextureFromEmbedded(const aiTexture* EmbeddedTex,
                     return nullptr;
                 }
 
+#if WITH_EDITORONLY_DATA
                 Texture->MipGenSettings = TMGS_NoMipmaps;
-                Texture->SRGB = true;
+#endif
+                Texture->NeverStream = true;
+                Texture->LODGroup = TEXTUREGROUP_UI;
+                if (Type == aiTextureType_DIFFUSE || Type == aiTextureType_BASE_COLOR)
+                {
+                    Texture->SRGB = true;  // Color data
+                }
+                else
+                {
+                    Texture->SRGB = false; // Linear data
+                }
+
 
                 // Safe locking and copying
                 FTexture2DMipMap& Mip = Texture->GetPlatformData()->Mips[0];
@@ -372,13 +385,12 @@ UTexture2D* AMeshLoader::CreateTextureFromEmbedded(const aiTexture* EmbeddedTex,
     return nullptr;
 }
 
-
-UTexture2D* AMeshLoader::LoadTextureFromDisk(const FString& FilePath)
+UTexture2D* AMeshLoader::LoadTextureFromDisk(const FString& FbxFilePath)
 {
-    if (!FPaths::FileExists(FilePath)) return nullptr;
+    if (!FPaths::FileExists(FbxFilePath)) return nullptr;
 
     TArray<uint8> FileData;
-    if (!FFileHelper::LoadFileToArray(FileData, *FilePath)) return nullptr;
+    if (!FFileHelper::LoadFileToArray(FileData, *FbxFilePath)) return nullptr;
 
     IImageWrapperModule& Module = FModuleManager::LoadModuleChecked<IImageWrapperModule>("ImageWrapper");
     EImageFormat Format = Module.DetectImageFormat(FileData.GetData(), FileData.Num());

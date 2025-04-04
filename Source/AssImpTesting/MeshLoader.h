@@ -28,7 +28,7 @@ struct FMeshSectionData
     TArray<FVector> Tangents;
     TArray<FVector> Bitangents;
     FString MaterialName;
-    UMaterialInterface* Material = nullptr; // ✅ Add this line
+    UMaterialInterface* Material = nullptr;
 
 };
 
@@ -51,7 +51,7 @@ struct FFBXModelData
     GENERATED_BODY()
 
     FString ModelName;
-    FString FilePath;
+    FString FbxFilePath;
     FFBXNodeData RootNode;
 };
 
@@ -66,23 +66,23 @@ public:
     UFUNCTION(BlueprintCallable, Category = "FBX Import")
     void Load_FBXAndGLB_ModelFilesFromFolder(const FString& Folder);
     UFUNCTION(BlueprintCallable, Category = "FBX Import")
-    void LoadFBXModel(const FString& FilePath);
-    void ParseNode(aiNode* Node, const aiScene* Scene, FFBXNodeData& OutNode, const FString& FilePath);
+    void LoadFBXModel(const FString& FbxFilePath);
+    void ParseNode(aiNode* Node, const aiScene* Scene, FFBXNodeData& OutNode, const FString& FbxFilePath);
 
 protected:
     virtual void BeginPlay() override;
 private:
-    void ExtractMesh(aiMesh* Mesh, const aiScene* Scene, FMeshSectionData& OutMesh, const FString& FilePath);
+    void ExtractMesh(aiMesh* Mesh, const aiScene* Scene, FMeshSectionData& OutMesh, const FString& FbxFilePath);
     void SpawnCachedModels();
     void SpawnNodeRecursive(const FFBXNodeData& Node, AActor* Parent);
     FTransform ConvertAssimpMatrix(const aiMatrix4x4& AssimpMatrix);
-     void LoadMasterMaterial();
+    void LoadMasterMaterial();
     bool IsVectorFinite(const FVector& Vec);
     bool IsTransformValid(const FTransform& Transform);
     const TArray<FFBXModelData>& GetCachedModels();
-    UTexture2D* LoadTextureFromDisk(const FString& FilePath);
-    UTexture2D* CreateTextureFromEmbedded(const aiTexture* EmbeddedTex, const FString& DebugName);
-    UMaterialInstanceDynamic* CreateMaterialFromAssimp(aiMaterial* AssimpMaterial, const aiScene* Scene, const FString& FilePath);
+    UTexture2D* LoadTextureFromDisk(const FString& FbxFilePath);
+    UMaterialInstanceDynamic* CreateMaterialFromAssimp(aiMaterial* AssimpMaterial, const aiScene* Scene, const FString& FbxFilePath);
+    UTexture2D* CreateTextureFromEmbedded(const aiTexture* EmbeddedTex, const FString& DebugName, aiTextureType Type);
 private:
     UPROPERTY()
     TArray<UMaterialInstanceDynamic*> LoadedMaterials;
@@ -90,4 +90,7 @@ private:
     UMaterial* MasterMaterial = nullptr;
     AActor* RootFBXActor = nullptr;
     TArray<FFBXModelData> CachedModels;
+    FString ModelName;
+    FString FilePath;
+    FFBXNodeData RootNode;
 };
