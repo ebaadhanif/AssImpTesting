@@ -44,17 +44,6 @@ struct FFBXNodeData
     TArray<FMeshSectionData> MeshSections;
 };
 
-// --- Full Model
-USTRUCT()
-struct FFBXModelData
-{
-    GENERATED_BODY()
-
-    FString ModelName;
-    FString FbxFilePath;
-    FFBXNodeData RootNode;
-};
-
 
 UCLASS()
 class ASSIMPTESTING_API AMeshLoader : public AActor
@@ -63,34 +52,31 @@ class ASSIMPTESTING_API AMeshLoader : public AActor
 
 public:
     AMeshLoader();
-    UFUNCTION(BlueprintCallable, Category = "FBX Import")
-    void Load_FBXAndGLB_ModelFilesFromFolder(const FString& Folder);
-    UFUNCTION(BlueprintCallable, Category = "FBX Import")
     void LoadFBXModel(const FString& FbxFilePath);
     void ParseNode(aiNode* Node, const aiScene* Scene, FFBXNodeData& OutNode, const FString& FbxFilePath);
+    AActor* SpawnModel(UWorld* World, const FVector& SpawnLocation);
+    const FString& GetModelName() const { return ModelName; }
+    const FString& GetFilePath() const { return FilePath; }
+    const FFBXNodeData& GetRootNode() const { return RootNode; }
 
-protected:
-    virtual void BeginPlay() override;
 private:
     void ExtractMesh(aiMesh* Mesh, const aiScene* Scene, FMeshSectionData& OutMesh, const FString& FbxFilePath);
-    void SpawnCachedModels();
+
     void SpawnNodeRecursive(const FFBXNodeData& Node, AActor* Parent);
     FTransform ConvertAssimpMatrix(const aiMatrix4x4& AssimpMatrix);
     void LoadMasterMaterial();
     bool IsVectorFinite(const FVector& Vec);
     bool IsTransformValid(const FTransform& Transform);
-    const TArray<FFBXModelData>& GetCachedModels();
     UTexture2D* LoadTextureFromDisk(const FString& FbxFilePath);
     UMaterialInstanceDynamic* CreateMaterialFromAssimp(aiMaterial* AssimpMaterial, const aiScene* Scene, const FString& FbxFilePath);
     UTexture2D* CreateTextureFromEmbedded(const aiTexture* EmbeddedTex, const FString& DebugName, aiTextureType Type);
-private:
     UPROPERTY()
     TArray<UMaterialInstanceDynamic*> LoadedMaterials;
     UPROPERTY()
     UMaterial* MasterMaterial = nullptr;
     AActor* RootFBXActor = nullptr;
-    TArray<FFBXModelData> CachedModels;
     FString ModelName;
     FString FilePath;
     FFBXNodeData RootNode;
+
 };

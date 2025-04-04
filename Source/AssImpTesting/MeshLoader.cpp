@@ -17,28 +17,13 @@ AMeshLoader::AMeshLoader() {
     PrimaryActorTick.bCanEverTick = false;
 }
 
-void AMeshLoader::BeginPlay() {
-    Super::BeginPlay();
-    Load_FBXAndGLB_ModelFilesFromFolder(TEXT("C:/Users/ebaad.hanif/Desktop/FBX Models"));
-    SpawnCachedModels();
-}
-
-void AMeshLoader::Load_FBXAndGLB_ModelFilesFromFolder(const FString& Folder) {
-    TArray<FString> FbxFiles, GlbFiles;
-    IFileManager::Get().FindFiles(FbxFiles, *(Folder / TEXT("*.fbx")), true, false);
-    IFileManager::Get().FindFiles(GlbFiles, *(Folder / TEXT("*.glb")), true, false);
-    for (const FString& File : FbxFiles) {
-        LoadFBXModel(FPaths::Combine(Folder, File));
-    }
-    for (const FString& File : GlbFiles) {
-        LoadFBXModel(FPaths::Combine(Folder, File));
-    }
-}
-
-void AMeshLoader::LoadFBXModel(const FString& FbxFilePath)
+void AMeshLoader::LoadFBXModel(const FString& InFilePath)
 {
+    FilePath = InFilePath;
+    ModelName = FPaths::GetBaseFilename(FilePath);
+
     Assimp::Importer Importer;
-    const aiScene* Scene = Importer.ReadFile(TCHAR_TO_UTF8(*FbxFilePath),
+    const aiScene* Scene = Importer.ReadFile(TCHAR_TO_UTF8(*FilePath),
         aiProcess_Triangulate |
         aiProcess_GenNormals |
         aiProcess_CalcTangentSpace |
@@ -49,19 +34,12 @@ void AMeshLoader::LoadFBXModel(const FString& FbxFilePath)
 
     if (!Scene || !Scene->mRootNode)
     {
-        UE_LOG(LogTemp, Error, TEXT("Failed to load FBX: %s"), *FbxFilePath);
+        UE_LOG(LogTemp, Error, TEXT("❌ Failed to load FBX: %s"), *FilePath);
         return;
     }
 
-    FFBXModelData Model;
-    Model.ModelName = FPaths::GetBaseFilename(FbxFilePath);
-    Model.FbxFilePath = FbxFilePath;
-
-
-    ParseNode(Scene->mRootNode, Scene, Model.RootNode, FbxFilePath);
-
-
-    CachedModels.Add(MoveTemp(Model));
+    RootNode = FFBXNodeData();
+    ParseNode(Scene->mRootNode, Scene, RootNode, FilePath);
 }
 
 void AMeshLoader::ParseNode(aiNode* Node, const aiScene* Scene, FFBXNodeData& OutNode, const FString& FbxFilePath) {
@@ -106,21 +84,30 @@ void AMeshLoader::ExtractMesh(aiMesh* Mesh, const aiScene* Scene, FMeshSectionDa
     }
 }
 
-void AMeshLoader::SpawnCachedModels() {
-    for (const FFBXModelData& Model : CachedModels) {
-        AActor* RootActor = GetWorld()->SpawnActor<AActor>(AActor::StaticClass());
+AActor* AMeshLoader::SpawnModel(UWorld* World, const FVector& SpawnLocation)
+{
+    if (!World) return nullptr;
+
+    // Spawn root actor
+    AActor* RootActor = World->SpawnActor<AActor>(AActor::StaticClass(), SpawnLocation, FRotator::ZeroRotator);
+    RootActor = RootActor;
+
 #if WITH_EDITOR
-        RootActor->SetActorLabel(Model.ModelName);
+    RootActor->SetActorLabel(ModelName);
 #endif
-        USceneComponent* RootComp = NewObject<USceneComponent>(RootActor);
-        RootComp->RegisterComponent();
-        RootActor->SetRootComponent(RootComp);
-        for (const FFBXNodeData& Child : Model.RootNode.Children)
-        {
-            SpawnNodeRecursive(Child, RootActor);
-        }
+
+    USceneComponent* RootComp = NewObject<USceneComponent>(RootActor);
+    RootComp->RegisterComponent();
+    RootActor->SetRootComponent(RootComp);
+
+    for (FFBXNodeData& Child : RootNode.Children)
+    {
+        SpawnNodeRecursive(Child, RootActor);
     }
+
+    return RootActor;
 }
+
 
 void AMeshLoader::SpawnNodeRecursive(const FFBXNodeData& Node, AActor* Parent) {
     AActor* NodeActor = GetWorld()->SpawnActor<AActor>(AActor::StaticClass());
@@ -424,9 +411,4 @@ bool AMeshLoader::IsVectorFinite(const FVector& Vec)
 bool AMeshLoader::IsTransformValid(const FTransform& Transform)
 {
     return IsVectorFinite(Transform.GetLocation()) && IsVectorFinite(Transform.GetScale3D());
-}
-
-const TArray<FFBXModelData>& AMeshLoader::GetCachedModels()
-{
-    return CachedModels;
 }
