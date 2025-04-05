@@ -7,6 +7,14 @@
 #include "assimp/scene.h"
 #include "assimp/Importer.hpp"
 #include "assimp/postprocess.h"
+#include "Engine/Texture2D.h"
+#include "Engine/Texture.h"
+#include "Materials/MaterialInstanceDynamic.h"
+#include "Materials/MaterialInterface.h"
+#include "Engine/TextureDefines.h"
+#include "Materials/Material.h"
+#include "TextureResource.h"         // For PlatformData
+#include "Rendering/Texture2DResource.h"
 #include "MeshLoader.generated.h"
 
 struct aiScene;
@@ -46,7 +54,7 @@ struct FFBXNodeData
 
 
 UCLASS()
-class ASSIMPTESTING_API AMeshLoader : public AActor
+class RUNTIMEMODELSIMPORTER_API AMeshLoader : public AActor
 {
     GENERATED_BODY()
 

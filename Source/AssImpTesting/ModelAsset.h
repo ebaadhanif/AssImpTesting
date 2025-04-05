@@ -14,7 +14,7 @@ class ASSIMPTESTING_API AModelAsset : public AActor
 public:	
 	// Sets default values for this actor's properties
 	AModelAsset();
-	FString ModelsFolderpath = "C:/Users/ebaad.hanif/Desktop/FBX Models";
+	FString ModelsFolderpath = "C:/Users/ebaad/OneDrive/Desktop/FBX Models";
 
 protected:
 	// Called when the game starts or when spawned

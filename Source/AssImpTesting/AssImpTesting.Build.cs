@@ -11,7 +11,7 @@ public class AssImpTesting : ModuleRules
 	
 		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput", "ProceduralMeshComponent", "AssetRegistry",
             "MeshDescription", 
-    "StaticMeshDescription", "ImageWrapper"});
+    "StaticMeshDescription", "ImageWrapper", "RuntimeModelsImporter"});
 
         string AssimpPath = Path.Combine(ModuleDirectory, "../../ThirdParty/Assimp");
 
