@@ -108,7 +108,6 @@ AActor* AMeshLoader::SpawnModel(UWorld* World, const FVector& SpawnLocation)
     return RootActor;
 }
 
-
 void AMeshLoader::SpawnNodeRecursive(const FFBXNodeData& Node, AActor* Parent) {
     AActor* NodeActor = GetWorld()->SpawnActor<AActor>(AActor::StaticClass());
 #if WITH_EDITOR
@@ -145,12 +144,22 @@ FTransform AMeshLoader::ConvertAssimpMatrix(const aiMatrix4x4& M) {
     return FTransform(FQuat(Matrix.Rotator()), FVector(Matrix.M[3][0], Matrix.M[3][1], Matrix.M[3][2]), Matrix.GetScaleVector());
 }
 
-void AMeshLoader::LoadMasterMaterial() {
+void AMeshLoader::LoadMasterMaterial()
+{
     MasterMaterial = LoadObject<UMaterial>(nullptr, TEXT("/Game/Materials/M_BaseMaterial.M_BaseMaterial"));
-    if (!MasterMaterial) {
+
+    if (!MasterMaterial)
+    {
+        MasterMaterial = LoadObject<UMaterial>(nullptr, TEXT("/RuntimeModelsImporter/Materials/M_BaseMaterial.M_BaseMaterial"));
+    }
+
+    if (!MasterMaterial)
+    {
         MasterMaterial = LoadObject<UMaterial>(nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
+        UE_LOG(LogTemp, Warning, TEXT("⚠️ No custom M_BaseMaterial found. Using Engine fallback."));
     }
 }
+
 
 UMaterialInstanceDynamic* AMeshLoader::CreateMaterialFromAssimp(aiMaterial* AssimpMaterial, const aiScene* Scene, const FString& FbxFilePath)
 {
@@ -412,3 +421,32 @@ bool AMeshLoader::IsTransformValid(const FTransform& Transform)
 {
     return IsVectorFinite(Transform.GetLocation()) && IsVectorFinite(Transform.GetScale3D());
 }
+
+void AMeshLoader::LoadAssimpDLLIfNeeded()
+{
+    static bool bLoaded = false;
+    if (bLoaded) return;
+
+    FString PluginDir = FPaths::ProjectPluginsDir();  // Handles both Editor & Packaged
+    FString DllPath = FPaths::Combine(PluginDir, TEXT("RuntimeModelsImporter/Binaries/Win64/assimp-vc143-mt.dll"));
+
+    if (FPaths::FileExists(DllPath))
+    {
+        void* Handle = FPlatformProcess::GetDllHandle(*DllPath);
+        if (Handle)
+        {
+            bLoaded = true;
+            UE_LOG(LogTemp, Display, TEXT("✅ Assimp DLL loaded successfully from: %s"), *DllPath);
+        }
+        else
+        {
+            UE_LOG(LogTemp, Error, TEXT("❌ Failed to load Assimp DLL from: %s"), *DllPath);
+        }
+    }
+    else
+    {
+        UE_LOG(LogTemp, Error, TEXT("❌ Assimp DLL not found at: %s"), *DllPath);
+    }
+}
+
+

@@ -5,46 +5,42 @@ using UnrealBuildTool;
 
 public class RuntimeModelsImporter : ModuleRules
 {
-	public RuntimeModelsImporter(ReadOnlyTargetRules Target) : base(Target)
-	{
-        PCHUsage = ModuleRules.PCHUsageMode.UseExplicitOrSharedPCHs;
+    public RuntimeModelsImporter(ReadOnlyTargetRules Target) : base(Target)
+    {
+        PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 
-        // Unreal modules your plugin depends on
-        PublicDependencyModuleNames.AddRange(new string[] {
+        PublicDependencyModuleNames.AddRange(new string[]
+        {
             "Core", "CoreUObject", "Engine", "InputCore",
             "EnhancedInput", "ProceduralMeshComponent",
             "AssetRegistry", "RenderCore", "RHI", "MeshDescription",
             "StaticMeshDescription", "ImageWrapper"
         });
 
-        // ✅ Third-party Assimp setup
-	string AssimpPath = Path.Combine(ModuleDirectory, "ThirdParty", "Assimp");
-       // string AssimpPath = Path.Combine(ModuleDirectory, "../../ThirdParty/Assimp");
+        // ✅ Path to Assimp inside plugin folder
+        string AssimpPath = Path.Combine(ModuleDirectory, "ThirdParty", "Assimp");
 
-
-        // Assimp includes
+        // ✅ Include Assimp headers
         PublicIncludePaths.Add(Path.Combine(AssimpPath, "include"));
 
-        // Assimp lib
+        // ✅ Link Assimp static lib
         PublicAdditionalLibraries.Add(Path.Combine(AssimpPath, "lib", "assimp-vc143-mt.lib"));
 
-        // Assimp DLL runtime copy for packaged builds
-        string DLLSourcePath = Path.Combine(AssimpPath, "bin", "assimp-vc143-mt.dll");
-        string DLLDestPath = Path.Combine("$(BinaryOutputDir)", "assimp-vc143-mt.dll");
+        // ✅ Delay-load Assimp DLL
+        PublicDelayLoadDLLs.Add("assimp-vc143-mt.dll");
 
-        if (File.Exists(DLLSourcePath))
+        // ✅ RuntimeDependencies for packaged build
+        string DLLPath = Path.Combine(AssimpPath, "bin", "assimp-vc143-mt.dll");
+        if (File.Exists(DLLPath))
         {
-            RuntimeDependencies.Add(DLLDestPath, DLLSourcePath);
+            RuntimeDependencies.Add("$(PluginDir)/Binaries/Win64/assimp-vc143-mt.dll", DLLPath);
         }
         else
         {
-            System.Console.WriteLine("Warning: Assimp DLL not found at " + DLLSourcePath);
+            System.Console.WriteLine("❌ Assimp DLL missing: " + DLLPath);
         }
 
-        // Load DLL at runtime (delayed)
-        PublicDelayLoadDLLs.Add("assimp-vc143-mt.dll");
-
-        // Required for Assimp
+        // ✅ Enable RTTI (Assimp uses dynamic_cast etc.)
         bUseRTTI = true;
     }
 }

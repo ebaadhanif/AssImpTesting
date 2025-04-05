@@ -66,6 +66,7 @@ public:
     const FString& GetModelName() const { return ModelName; }
     const FString& GetFilePath() const { return FilePath; }
     const FFBXNodeData& GetRootNode() const { return RootNode; }
+    void LoadAssimpDLLIfNeeded();
 
 private:
     void ExtractMesh(aiMesh* Mesh, const aiScene* Scene, FMeshSectionData& OutMesh, const FString& FbxFilePath);
@@ -75,6 +76,8 @@ private:
     void LoadMasterMaterial();
     bool IsVectorFinite(const FVector& Vec);
     bool IsTransformValid(const FTransform& Transform);
+
+
     UTexture2D* LoadTextureFromDisk(const FString& FbxFilePath);
     UMaterialInstanceDynamic* CreateMaterialFromAssimp(aiMaterial* AssimpMaterial, const aiScene* Scene, const FString& FbxFilePath);
     UTexture2D* CreateTextureFromEmbedded(const aiTexture* EmbeddedTex, const FString& DebugName, aiTextureType Type);

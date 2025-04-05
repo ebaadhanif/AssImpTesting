@@ -23,6 +23,7 @@ void AModelAsset::BeginPlay()
 {
     Super::BeginPlay();
     AMeshLoader* Loader = GetWorld()->SpawnActor<AMeshLoader>();
+    Loader->LoadAssimpDLLIfNeeded();
     
     TArray<FString> FbxFiles, GlbFiles;
     IFileManager::Get().FindFiles(FbxFiles, *(ModelsFolderpath / TEXT("*.fbx")), true, false);
