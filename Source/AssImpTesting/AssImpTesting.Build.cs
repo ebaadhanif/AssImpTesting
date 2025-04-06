@@ -9,7 +9,7 @@ public class AssImpTesting : ModuleRules
 	{
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 	
-		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput", "ProceduralMeshComponent", "AssetRegistry",
+		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "EnhancedInput","Json" , "JsonUtilities", "ProceduralMeshComponent", "AssetRegistry",
             "MeshDescription", 
     "StaticMeshDescription", "ImageWrapper", "RuntimeModelsImporter"});
 

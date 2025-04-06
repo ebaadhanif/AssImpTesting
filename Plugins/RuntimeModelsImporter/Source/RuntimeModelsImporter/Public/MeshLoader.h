@@ -63,20 +63,23 @@ public:
     void LoadFBXModel(const FString& FbxFilePath);
     void ParseNode(aiNode* Node, const aiScene* Scene, FFBXNodeData& OutNode, const FString& FbxFilePath);
     AActor* SpawnModel(UWorld* World, const FVector& SpawnLocation);
-    const FString& GetModelName() const { return ModelName; }
-    const FString& GetFilePath() const { return FilePath; }
     const FFBXNodeData& GetRootNode() const { return RootNode; }
     void LoadAssimpDLLIfNeeded();
+    AActor* GetNodeActorByName(const FString& NodeName) const;
+    void SetModelID(const FString& InID) { ModelID = InID; }
+    FString GetModelID() const { return ModelID; }
+    void SetModelName(const FString& InName) { ModelName = InName; }
+    FString GetModelName() const { return ModelName; }
 
 private:
     void ExtractMesh(aiMesh* Mesh, const aiScene* Scene, FMeshSectionData& OutMesh, const FString& FbxFilePath);
-
+    //UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Model")
     void SpawnNodeRecursive(const FFBXNodeData& Node, AActor* Parent);
     FTransform ConvertAssimpMatrix(const aiMatrix4x4& AssimpMatrix);
     void LoadMasterMaterial();
     bool IsVectorFinite(const FVector& Vec);
     bool IsTransformValid(const FTransform& Transform);
-
+    TMap<FString, AActor*> SpawnedNodeActors;
 
     UTexture2D* LoadTextureFromDisk(const FString& FbxFilePath);
     UMaterialInstanceDynamic* CreateMaterialFromAssimp(aiMaterial* AssimpMaterial, const aiScene* Scene, const FString& FbxFilePath);
@@ -86,7 +89,8 @@ private:
     UPROPERTY()
     UMaterial* MasterMaterial = nullptr;
     AActor* RootFBXActor = nullptr;
-    FString ModelName;
+    FString ModelID = "DefaultModelID";
+    FString ModelName = "DefaultModelName";
     FString FilePath;
     FFBXNodeData RootNode;
 

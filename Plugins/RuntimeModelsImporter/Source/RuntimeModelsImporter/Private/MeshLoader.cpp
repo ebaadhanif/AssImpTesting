@@ -108,29 +108,43 @@ AActor* AMeshLoader::SpawnModel(UWorld* World, const FVector& SpawnLocation)
     return RootActor;
 }
 
-void AMeshLoader::SpawnNodeRecursive(const FFBXNodeData& Node, AActor* Parent) {
+void AMeshLoader::SpawnNodeRecursive(const FFBXNodeData& Node, AActor* Parent)
+{
     AActor* NodeActor = GetWorld()->SpawnActor<AActor>(AActor::StaticClass());
 #if WITH_EDITOR
     NodeActor->SetActorLabel(Node.Name);
 #endif
+
+    // ✅ Store reference in map
+    SpawnedNodeActors.Add(Node.Name, NodeActor);
+
+    // ✅ Attach and transform setup
     USceneComponent* RootComp = NewObject<USceneComponent>(NodeActor);
     RootComp->RegisterComponent();
     NodeActor->SetRootComponent(RootComp);
     NodeActor->AttachToActor(Parent, FAttachmentTransformRules::KeepRelativeTransform);
     NodeActor->SetActorRelativeTransform(Node.Transform);
 
-    for (const FMeshSectionData& Section : Node.MeshSections) {
+    // ✅ Create mesh sections
+    for (const FMeshSectionData& Section : Node.MeshSections)
+    {
         UProceduralMeshComponent* Mesh = NewObject<UProceduralMeshComponent>(NodeActor);
         Mesh->RegisterComponent();
         Mesh->AttachToComponent(RootComp, FAttachmentTransformRules::KeepRelativeTransform);
+
         TArray<FProcMeshTangent> Tangents;
-        for (const FVector& Tangent : Section.Tangents) {
+        for (const FVector& Tangent : Section.Tangents)
+        {
             Tangents.Add(FProcMeshTangent(Tangent, false));
         }
+
         Mesh->CreateMeshSection_LinearColor(0, Section.Vertices, Section.Triangles, Section.Normals, Section.UVs, {}, Tangents, true);
         Mesh->SetMaterial(0, Section.Material ? Section.Material : LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial")));
     }
-    for (const FFBXNodeData& Child : Node.Children) {
+
+    // ✅ Recursively spawn children
+    for (const FFBXNodeData& Child : Node.Children)
+    {
         SpawnNodeRecursive(Child, NodeActor);
     }
 }
@@ -159,7 +173,6 @@ void AMeshLoader::LoadMasterMaterial()
         UE_LOG(LogTemp, Warning, TEXT("⚠️ No custom M_BaseMaterial found. Using Engine fallback."));
     }
 }
-
 
 UMaterialInstanceDynamic* AMeshLoader::CreateMaterialFromAssimp(aiMaterial* AssimpMaterial, const aiScene* Scene, const FString& FbxFilePath)
 {
@@ -448,5 +461,17 @@ void AMeshLoader::LoadAssimpDLLIfNeeded()
         UE_LOG(LogTemp, Error, TEXT("❌ Assimp DLL not found at: %s"), *DllPath);
     }
 }
+
+AActor* AMeshLoader::GetNodeActorByName(const FString& NodeName) const
+{
+    if (SpawnedNodeActors.Contains(NodeName))
+    {
+        return SpawnedNodeActors[NodeName];
+    }
+    return nullptr;
+}
+
+
+
 
 

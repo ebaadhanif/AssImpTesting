@@ -1,0 +1,77 @@
+[
+    {     
+ 	"ModelName": "car",
+	"ModelID": "DIS1",
+
+        "Attachments": [
+	    {
+                "NodeName": "car9",
+                "AttachmentType": "StaticMesh",
+                "AssetPath": "/Game/Meshes/WheelMesh"
+            },
+
+            {
+                "NodeName": "Wheel.004",
+                "AttachmentType": "StaticMesh",
+                "AssetPath": "/Game/Meshes/WheelMesh"
+            },
+            {
+                "NodeName": "Wheel.005",
+                "AttachmentType": "StaticMesh",
+                "AssetPath": "/Game/Meshes/WheelMesh"
+            },
+            {
+                "NodeName": "Wheel.006",
+                "AttachmentType": "StaticMesh",
+                "AssetPath": "/Game/Meshes/WheelMesh"
+            },
+            {
+                "NodeName": "Wheel.007",
+                "AttachmentType": "StaticMesh",
+                "AssetPath": "/Game/Meshes/WheelMesh"
+            },
+            {
+                "NodeName": "FlagPoint",
+                "AttachmentType": "VFX",
+                "AssetPath": "/Game/VFX/FlagEmitter"
+            }
+        ]
+    },    {     
+ 	"ModelName": "cottage",
+	"ModelID": "DIS2",
+
+        "Attachments": [
+	    {
+                "NodeName": "car9",
+                "AttachmentType": "StaticMesh",
+                "AssetPath": "/Game/Meshes/WheelMesh"
+            },
+
+            {
+                "NodeName": "Wheel.004",
+                "AttachmentType": "StaticMesh",
+                "AssetPath": "/Game/Meshes/WheelMesh"
+            },
+            {
+                "NodeName": "Wheel.005",
+                "AttachmentType": "StaticMesh",
+                "AssetPath": "/Game/Meshes/WheelMesh"
+            },
+            {
+                "NodeName": "Wheel.006",
+                "AttachmentType": "StaticMesh",
+                "AssetPath": "/Game/Meshes/WheelMesh"
+            },
+            {
+                "NodeName": "Wheel.007",
+                "AttachmentType": "StaticMesh",
+                "AssetPath": "/Game/Meshes/WheelMesh"
+            },
+            {
+                "NodeName": "FlagPoint",
+                "AttachmentType": "VFX",
+                "AssetPath": "/Game/VFX/FlagEmitter"
+            }
+        ]
+    }
+]
