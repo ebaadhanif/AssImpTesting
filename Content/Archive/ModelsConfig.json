@@ -7,7 +7,7 @@
 	    {
                 "NodeName": "car9",
                 "AttachmentType": "StaticMesh",
-                "AssetPath": "/Game/Meshes/WheelMesh"
+                "AssetPath": "/Game/ConfigData/Meshes/testmesh"
             },
 
             {

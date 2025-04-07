@@ -14,11 +14,14 @@
 	"IsBetaVersion": false,
 	"IsExperimentalVersion": false,
 	"Installed": true,
-	"Modules": [
-		{
-			"Name": "RuntimeModelsImporter",
-			"Type": "Runtime",
-			"LoadingPhase": "Default"
-		}
-	]
+	 "Modules": [
+        {
+            "Name": "RuntimeModelsImporter",
+            "Type": "Runtime",
+            "LoadingPhase": "Default"
+        }
+    ],
+    "SupportedTargetPlatforms": [
+        "Win64"
+    ]
 }

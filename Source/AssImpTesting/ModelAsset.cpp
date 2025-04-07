@@ -1,10 +1,5 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
+﻿#include "ModelAsset.h"
 
-
-#include "ModelAsset.h"
-
-
-// Sets default values
 AModelAsset::AModelAsset()
 {
     // Set this actor to call Tick() every frame.  You can turn this off to improve performance if you don't need it.
@@ -13,7 +8,6 @@ AModelAsset::AModelAsset()
 
 }
 
-// Called every frame
 void AModelAsset::Tick(float DeltaTime)
 {
     Super::Tick(DeltaTime);
@@ -23,68 +17,48 @@ void AModelAsset::Tick(float DeltaTime)
 void AModelAsset::BeginPlay()
 {
     Super::BeginPlay();
-
-    ConfigManager->LoadConfig(ModelsConfigFilepath); // Reads full config for all models
-
-
-
+    ConfigManager->LoadConfig(ModelsConfigFilepath); 
     TArray<FString> FbxFiles, GlbFiles;
     IFileManager::Get().FindFiles(FbxFiles, *(ModelsFolderpath / TEXT("*.fbx")), true, false);
     IFileManager::Get().FindFiles(GlbFiles, *(ModelsFolderpath / TEXT("*.glb")), true, false);
-
     for (const FString& File : FbxFiles)
     {
         FString Path = FPaths::Combine(ModelsFolderpath, File);
-        AMeshLoader* Loader = GetWorld()->SpawnActor<AMeshLoader>();
-        if (Loader)
-        {
-            Loader->LoadAssimpDLLIfNeeded();
-            Loader->LoadFBXModel(Path);
-            Loader->SetModelName(ExtractModelNameFromPath(Path));
-            Loader->SpawnModel(GetWorld(), FVector::ZeroVector);
-            LoadedModels.Add(Loader);
-
-            if (ConfigManager)
-            {
-                ConfigManager->AttachConfigToModel(Loader);
-            }
-        }
+        Initialize3DModel(Path);
     }
     for (const FString& File : GlbFiles)
     {
         FString Path = FPaths::Combine(ModelsFolderpath, File);
-        AMeshLoader* Loader = GetWorld()->SpawnActor<AMeshLoader>();
-        if (Loader)
-        {
-            Loader->LoadAssimpDLLIfNeeded();
-            Loader->LoadFBXModel(Path);
-            Loader->SetModelName(ExtractModelNameFromPath(Path));
-            Loader->SpawnModel(GetWorld(), FVector::ZeroVector);
-            LoadedModels.Add(Loader);
-
-            if (ConfigManager)
-            {
-                ConfigManager->AttachConfigToModel(Loader);
-            }
-        }
+        Initialize3DModel(Path);
     }
-
+    for (AMeshLoader* Model : LoadedModels)
+    {
+        SpawnAndConfigure3DModel(Model, FVector::ZeroVector);
+    }
 }
 
-
-void AModelAsset::SetConfigManager(UModelsConfigManager* InConfigManager)
+void AModelAsset::Initialize3DModel(FString Path)
 {
-    ConfigManager = InConfigManager;
+    AMeshLoader* Loader = GetWorld()->SpawnActor<AMeshLoader>();
+    if (Loader)
+    {
+        Loader->LoadAssimpDLLIfNeeded();
+        Loader->LoadFBXModel(Path);
+        Loader->SetModelName(ExtractModelNameFromPath(Path));
+        LoadedModels.Add(Loader);
+    }
 }
 
+void AModelAsset::SpawnAndConfigure3DModel(AMeshLoader* Model, const FVector& SpawnLocation)
+{
+    Model->SpawnModel(GetWorld(), SpawnLocation);
+    if (ConfigManager)
+    {
+        ConfigManager->AttachConfigToModel(Model);
+    }
+}
 
 FString AModelAsset::ExtractModelNameFromPath(const FString& Path)
 {
-    // Customize this if ID is based on something else
     return FPaths::GetBaseFilename(Path);
 }
-
-
-
-
-        

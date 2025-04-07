@@ -92,40 +92,54 @@ void UModelsConfigManager::AttachElementToNode(const FAttachmentConfig& Attachme
 {
     if (!NodeActor) return;
 
+    UWorld* World = NodeActor->GetWorld();
+    if (!World) return;
+
+    // Use the node's location/rotation
+    FVector Location = NodeActor->GetActorLocation();
+    FRotator Rotation = NodeActor->GetActorRotation();
+
     if (Attachment.AttachmentType == "StaticMesh")
     {
         UStaticMesh* Mesh = Cast<UStaticMesh>(StaticLoadObject(UStaticMesh::StaticClass(), nullptr, *Attachment.AssetPath));
         if (Mesh)
         {
-            UStaticMeshComponent* Comp = NewObject<UStaticMeshComponent>(NodeActor);
-            Comp->SetStaticMesh(Mesh);
-            Comp->AttachToComponent(NodeActor->GetRootComponent(), FAttachmentTransformRules::KeepRelativeTransform);
-            Comp->RegisterComponent();
-            UE_LOG(LogTemp, Display, TEXT("✅ Attached StaticMesh to node %s"), *Attachment.NodeName);
+            AActor* MeshActor = World->SpawnActor<AActor>(AActor::StaticClass(), Location, Rotation);
+            UStaticMeshComponent* MeshComp = NewObject<UStaticMeshComponent>(MeshActor);
+            MeshComp->SetStaticMesh(Mesh);
+            MeshComp->RegisterComponent();
+            MeshActor->SetRootComponent(MeshComp);
+            MeshActor->AttachToActor(NodeActor, FAttachmentTransformRules::KeepRelativeTransform);
+            UE_LOG(LogTemp, Display, TEXT("✅ Attached StaticMesh Actor to node %s"), *Attachment.NodeName);
         }
     }
     else if (Attachment.AttachmentType == "VFX")
     {
-        /*UParticleSystem* VFX = Cast<UParticleSystem>(StaticLoadObject(UParticleSystem::StaticClass(), nullptr, *Attachment.AssetPath));
+        // Uncomment and use if you have VFX systems
+        /*
+        UParticleSystem* VFX = Cast<UParticleSystem>(StaticLoadObject(UParticleSystem::StaticClass(), nullptr, *Attachment.AssetPath));
         if (VFX)
         {
-            UParticleSystemComponent* VFXComp = NewObject<UParticleSystemComponent>(NodeActor);
+            AActor* VFXActor = World->SpawnActor<AActor>(AActor::StaticClass(), Location, Rotation);
+            UParticleSystemComponent* VFXComp = NewObject<UParticleSystemComponent>(VFXActor);
             VFXComp->SetTemplate(VFX);
-            VFXComp->AttachToComponent(NodeActor->GetRootComponent(), FAttachmentTransformRules::KeepRelativeTransform);
             VFXComp->RegisterComponent();
-            UE_LOG(LogTemp, Display, TEXT("✅ Attached VFX to node %s"), *Attachment.NodeName);
-        }*/
+            VFXActor->SetRootComponent(VFXComp);
+            VFXActor->AttachToActor(NodeActor, FAttachmentTransformRules::KeepRelativeTransform);
+            UE_LOG(LogTemp, Display, TEXT("✅ Attached VFX Actor to node %s"), *Attachment.NodeName);
+        }
+        */
     }
     else if (Attachment.AttachmentType == "Blueprint")
     {
         UClass* BPClass = Cast<UClass>(StaticLoadObject(UClass::StaticClass(), nullptr, *Attachment.AssetPath));
         if (BPClass)
         {
-            AActor* Spawned = NodeActor->GetWorld()->SpawnActor<AActor>(BPClass, NodeActor->GetActorLocation(), NodeActor->GetActorRotation());
-            if (Spawned)
+            AActor* BPActor = World->SpawnActor<AActor>(BPClass, Location, Rotation);
+            if (BPActor)
             {
-                Spawned->AttachToActor(NodeActor, FAttachmentTransformRules::KeepRelativeTransform);
-                UE_LOG(LogTemp, Display, TEXT("✅ Spawned Blueprint at node %s"), *Attachment.NodeName);
+                BPActor->AttachToActor(NodeActor, FAttachmentTransformRules::KeepRelativeTransform);
+                UE_LOG(LogTemp, Display, TEXT("✅ Spawned Blueprint Actor at node %s"), *Attachment.NodeName);
             }
         }
     }
