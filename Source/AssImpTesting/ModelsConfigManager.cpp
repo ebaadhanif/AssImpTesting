@@ -59,7 +59,7 @@ void UModelsConfigManager::LoadConfig(FString FilePath)
 
 
 
-void UModelsConfigManager::AttachConfigToModel(AMeshLoader* Loader)
+void UModelsConfigManager::AttachConfigToModel(UAssimpRuntime3DModelsImporter* Loader)
 {
     if (!Loader) return;
 

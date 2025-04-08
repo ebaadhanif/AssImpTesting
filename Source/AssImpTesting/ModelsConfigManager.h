@@ -4,7 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "UObject/NoExportTypes.h"
-#include "MeshLoader.h"
+#include "AssimpRuntime3DModelsImporter.h"
 #include "ModelsConfigManager.generated.h"
 
 USTRUCT()
@@ -45,7 +45,7 @@ class ASSIMPTESTING_API UModelsConfigManager : public UObject
 
 public:
     void LoadConfig(FString FilePath);
-    void AttachConfigToModel(AMeshLoader* Loader);
+    void AttachConfigToModel(UAssimpRuntime3DModelsImporter* Loader);
 
 private:
     TArray<FModelAttachmentConfig> ModelConfigs;

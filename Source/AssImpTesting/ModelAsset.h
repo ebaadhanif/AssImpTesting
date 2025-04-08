@@ -4,7 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
-#include "MeshLoader.h"
+#include "AssimpRuntime3DModelsImporter.h"
 #include "ModelsConfigManager.h"
 #include "ModelAsset.generated.h"
 
@@ -27,11 +27,12 @@ public:
 	// Called every frame
 	virtual void Tick(float DeltaTime) override;
 private:
-	TArray<AMeshLoader*> LoadedModels;
+	TArray<UAssimpRuntime3DModelsImporter*> Loaded3DModels;
+
 	UPROPERTY()
 	UModelsConfigManager* ConfigManager;
 
 	FString ExtractModelNameFromPath(const FString& Path);
 	void Initialize3DModel(FString Path);
-	void SpawnAndConfigure3DModel(AMeshLoader* Loader, const FVector& SpawnLocation);
+	void SpawnAndConfigure3DModel(UAssimpRuntime3DModelsImporter* Model, const FVector& SpawnLocation);
 };

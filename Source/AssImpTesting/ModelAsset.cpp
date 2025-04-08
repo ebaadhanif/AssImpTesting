@@ -31,7 +31,7 @@ void AModelAsset::BeginPlay()
         FString Path = FPaths::Combine(ModelsFolderpath, File);
         Initialize3DModel(Path);
     }
-    for (AMeshLoader* Model : LoadedModels)
+    for (UAssimpRuntime3DModelsImporter* Model : Loaded3DModels)
     {
         SpawnAndConfigure3DModel(Model, FVector::ZeroVector);
     }
@@ -39,17 +39,17 @@ void AModelAsset::BeginPlay()
 
 void AModelAsset::Initialize3DModel(FString Path)
 {
-    AMeshLoader* Loader = GetWorld()->SpawnActor<AMeshLoader>();
-    if (Loader)
+    UAssimpRuntime3DModelsImporter* Model = NewObject<UAssimpRuntime3DModelsImporter>(this);
+    if (Model)
     {
-        Loader->LoadAssimpDLLIfNeeded();
-        Loader->LoadFBXModel(Path);
-        Loader->SetModelName(ExtractModelNameFromPath(Path));
-        LoadedModels.Add(Loader);
+        Model->LoadAssimpDLLIfNeeded();
+        Model->LoadFBXModel(Path);
+        Model->SetModelName(ExtractModelNameFromPath(Path));
+        Loaded3DModels.Add(Model);
     }
 }
 
-void AModelAsset::SpawnAndConfigure3DModel(AMeshLoader* Model, const FVector& SpawnLocation)
+void AModelAsset::SpawnAndConfigure3DModel(UAssimpRuntime3DModelsImporter* Model, const FVector& SpawnLocation)
 {
     Model->SpawnModel(GetWorld(), SpawnLocation);
     if (ConfigManager)

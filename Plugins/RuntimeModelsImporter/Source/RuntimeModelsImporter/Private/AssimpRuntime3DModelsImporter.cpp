@@ -1,4 +1,7 @@
-﻿#include "MeshLoader.h"
+﻿// Fill out your copyright notice in the Description page of Project Settings.
+
+
+#include "AssimpRuntime3DModelsImporter.h"
 #include "ProceduralMeshComponent.h"
 #include "Engine/World.h"
 #include "StaticMeshAttributes.h"
@@ -13,11 +16,10 @@
 #include "Misc/FileHelper.h"
 #include "Materials/MaterialInstanceDynamic.h"
 
-AMeshLoader::AMeshLoader() {
-    PrimaryActorTick.bCanEverTick = false;
+UAssimpRuntime3DModelsImporter::UAssimpRuntime3DModelsImporter() {
 }
 
-void AMeshLoader::LoadFBXModel(const FString& InFilePath)
+void UAssimpRuntime3DModelsImporter::LoadFBXModel(const FString& InFilePath)
 {
     FilePath = InFilePath;
     ModelName = FPaths::GetBaseFilename(FilePath);
@@ -38,11 +40,11 @@ void AMeshLoader::LoadFBXModel(const FString& InFilePath)
         return;
     }
 
-    RootNode = FFBXNodeData();
+    RootNode = FModelNodeData();
     ParseNode(Scene->mRootNode, Scene, RootNode, FilePath);
 }
 
-void AMeshLoader::ParseNode(aiNode* Node, const aiScene* Scene, FFBXNodeData& OutNode, const FString& FbxFilePath) {
+void UAssimpRuntime3DModelsImporter::ParseNode(aiNode* Node, const aiScene* Scene, FModelNodeData& OutNode, const FString& FbxFilePath) {
     OutNode.Name = UTF8_TO_TCHAR(Node->mName.C_Str());
     OutNode.Transform = ConvertAssimpMatrix(Node->mTransformation);
     if (FbxFilePath.EndsWith(".glb") || FbxFilePath.EndsWith(".gltf"))
@@ -53,19 +55,19 @@ void AMeshLoader::ParseNode(aiNode* Node, const aiScene* Scene, FFBXNodeData& Ou
 
     for (uint32 i = 0; i < Node->mNumMeshes; ++i) {
         aiMesh* Mesh = Scene->mMeshes[Node->mMeshes[i]];
-        FMeshSectionData MeshData;
+        FModelMeshData MeshData;
         ExtractMesh(Mesh, Scene, MeshData, FbxFilePath);
         OutNode.MeshSections.Add(MoveTemp(MeshData));
     }
 
     for (uint32 i = 0; i < Node->mNumChildren; ++i) {
-        FFBXNodeData ChildNode;
+        FModelNodeData ChildNode;
         ParseNode(Node->mChildren[i], Scene, ChildNode, FbxFilePath);
         OutNode.Children.Add(MoveTemp(ChildNode));
     }
 }
 
-void AMeshLoader::ExtractMesh(aiMesh* Mesh, const aiScene* Scene, FMeshSectionData& OutMesh, const FString& FbxFilePath) {
+void UAssimpRuntime3DModelsImporter::ExtractMesh(aiMesh* Mesh, const aiScene* Scene, FModelMeshData& OutMesh, const FString& FbxFilePath) {
     for (uint32 i = 0; i < Mesh->mNumVertices; ++i) {
         OutMesh.Vertices.Add(FVector(Mesh->mVertices[i].x, Mesh->mVertices[i].z, Mesh->mVertices[i].y));
         OutMesh.Normals.Add(FVector(Mesh->mNormals[i].x, Mesh->mNormals[i].z, Mesh->mNormals[i].y));
@@ -84,7 +86,7 @@ void AMeshLoader::ExtractMesh(aiMesh* Mesh, const aiScene* Scene, FMeshSectionDa
     }
 }
 
-AActor* AMeshLoader::SpawnModel(UWorld* World, const FVector& SpawnLocation)
+AActor* UAssimpRuntime3DModelsImporter::SpawnModel(UWorld* World, const FVector& SpawnLocation)
 {
     if (!World) return nullptr;
 
@@ -100,7 +102,7 @@ AActor* AMeshLoader::SpawnModel(UWorld* World, const FVector& SpawnLocation)
     RootComp->RegisterComponent();
     RootActor->SetRootComponent(RootComp);
 
-    for (FFBXNodeData& Child : RootNode.Children)
+    for (FModelNodeData& Child : RootNode.Children)
     {
         SpawnNodeRecursive(Child, RootActor);
     }
@@ -108,7 +110,7 @@ AActor* AMeshLoader::SpawnModel(UWorld* World, const FVector& SpawnLocation)
     return RootActor;
 }
 
-void AMeshLoader::SpawnNodeRecursive(const FFBXNodeData& Node, AActor* Parent)
+void UAssimpRuntime3DModelsImporter::SpawnNodeRecursive(const FModelNodeData& Node, AActor* Parent)
 {
     AActor* NodeActor = GetWorld()->SpawnActor<AActor>(AActor::StaticClass());
 #if WITH_EDITOR
@@ -126,7 +128,7 @@ void AMeshLoader::SpawnNodeRecursive(const FFBXNodeData& Node, AActor* Parent)
     NodeActor->SetActorRelativeTransform(Node.Transform);
 
     // ✅ Create mesh sections
-    for (const FMeshSectionData& Section : Node.MeshSections)
+    for (const FModelMeshData& Section : Node.MeshSections)
     {
         UProceduralMeshComponent* Mesh = NewObject<UProceduralMeshComponent>(NodeActor);
         Mesh->RegisterComponent();
@@ -143,13 +145,13 @@ void AMeshLoader::SpawnNodeRecursive(const FFBXNodeData& Node, AActor* Parent)
     }
 
     // ✅ Recursively spawn children
-    for (const FFBXNodeData& Child : Node.Children)
+    for (const FModelNodeData& Child : Node.Children)
     {
         SpawnNodeRecursive(Child, NodeActor);
     }
 }
 
-FTransform AMeshLoader::ConvertAssimpMatrix(const aiMatrix4x4& M) {
+FTransform UAssimpRuntime3DModelsImporter::ConvertAssimpMatrix(const aiMatrix4x4& M) {
     FMatrix Matrix(
         FPlane(M.a1, M.a2, M.a3, M.a4),
         FPlane(M.b1, M.b2, M.b3, M.b4),
@@ -158,7 +160,7 @@ FTransform AMeshLoader::ConvertAssimpMatrix(const aiMatrix4x4& M) {
     return FTransform(FQuat(Matrix.Rotator()), FVector(Matrix.M[3][0], Matrix.M[3][1], Matrix.M[3][2]), Matrix.GetScaleVector());
 }
 
-void AMeshLoader::LoadMasterMaterial()
+void UAssimpRuntime3DModelsImporter::LoadMasterMaterial()
 {
     MasterMaterial = LoadObject<UMaterial>(nullptr, TEXT("/Game/Materials/M_BaseMaterial.M_BaseMaterial"));
 
@@ -174,7 +176,7 @@ void AMeshLoader::LoadMasterMaterial()
     }
 }
 
-UMaterialInstanceDynamic* AMeshLoader::CreateMaterialFromAssimp(aiMaterial* AssimpMaterial, const aiScene* Scene, const FString& FbxFilePath)
+UMaterialInstanceDynamic* UAssimpRuntime3DModelsImporter::CreateMaterialFromAssimp(aiMaterial* AssimpMaterial, const aiScene* Scene, const FString& FbxFilePath)
 {
     if (!MasterMaterial)
         LoadMasterMaterial();
@@ -269,7 +271,7 @@ UMaterialInstanceDynamic* AMeshLoader::CreateMaterialFromAssimp(aiMaterial* Assi
     return MatInstance;
 }
 
-UTexture2D* AMeshLoader::CreateTextureFromEmbedded(const aiTexture* EmbeddedTex, const FString& DebugName, aiTextureType Type)
+UTexture2D* UAssimpRuntime3DModelsImporter::CreateTextureFromEmbedded(const aiTexture* EmbeddedTex, const FString& DebugName, aiTextureType Type)
 
 {
     if (!EmbeddedTex)
@@ -394,7 +396,7 @@ UTexture2D* AMeshLoader::CreateTextureFromEmbedded(const aiTexture* EmbeddedTex,
     return nullptr;
 }
 
-UTexture2D* AMeshLoader::LoadTextureFromDisk(const FString& FbxFilePath)
+UTexture2D* UAssimpRuntime3DModelsImporter::LoadTextureFromDisk(const FString& FbxFilePath)
 {
     if (!FPaths::FileExists(FbxFilePath)) return nullptr;
 
@@ -425,17 +427,17 @@ UTexture2D* AMeshLoader::LoadTextureFromDisk(const FString& FbxFilePath)
     return Texture;
 }
 
-bool AMeshLoader::IsVectorFinite(const FVector& Vec)
+bool UAssimpRuntime3DModelsImporter::IsVectorFinite(const FVector& Vec)
 {
     return FMath::IsFinite(Vec.X) && FMath::IsFinite(Vec.Y) && FMath::IsFinite(Vec.Z);
 }
 
-bool AMeshLoader::IsTransformValid(const FTransform& Transform)
+bool UAssimpRuntime3DModelsImporter::IsTransformValid(const FTransform& Transform)
 {
     return IsVectorFinite(Transform.GetLocation()) && IsVectorFinite(Transform.GetScale3D());
 }
 
-void AMeshLoader::LoadAssimpDLLIfNeeded()
+void UAssimpRuntime3DModelsImporter::LoadAssimpDLLIfNeeded()
 {
     static bool bLoaded = false;
     if (bLoaded) return;
@@ -462,7 +464,7 @@ void AMeshLoader::LoadAssimpDLLIfNeeded()
     }
 }
 
-AActor* AMeshLoader::GetNodeActorByName(const FString& NodeName) const
+AActor* UAssimpRuntime3DModelsImporter::GetNodeActorByName(const FString& NodeName) const
 {
     if (SpawnedNodeActors.Contains(NodeName))
     {

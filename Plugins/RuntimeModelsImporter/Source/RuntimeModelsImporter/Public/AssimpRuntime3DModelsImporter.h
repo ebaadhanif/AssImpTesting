@@ -1,6 +1,9 @@
-﻿#pragma once
+// Fill out your copyright notice in the Description page of Project Settings.
+
+#pragma once
 
 #include "CoreMinimal.h"
+#include "UObject/NoExportTypes.h"
 #include "GameFramework/Actor.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
@@ -15,8 +18,7 @@
 #include "Materials/Material.h"
 #include "TextureResource.h"         // For PlatformData
 #include "Rendering/Texture2DResource.h"
-#include "MeshLoader.generated.h"
-
+#include "AssimpRuntime3DModelsImporter.generated.h"
 struct aiScene;
 struct aiNode;
 struct aiMesh;
@@ -25,7 +27,7 @@ struct aiTexture;
 
 // --- Mesh Section Info
 USTRUCT()
-struct FMeshSectionData
+struct FModelMeshData
 {
     GENERATED_BODY()
 
@@ -42,28 +44,26 @@ struct FMeshSectionData
 
 // --- Node
 USTRUCT()
-struct FFBXNodeData
+struct FModelNodeData
 {
     GENERATED_BODY()
 
     FString Name;
     FTransform Transform;
-    TArray<FFBXNodeData> Children;
-    TArray<FMeshSectionData> MeshSections;
+    TArray<FModelNodeData> Children;
+    TArray<FModelMeshData> MeshSections;
 };
-
-
 UCLASS()
-class RUNTIMEMODELSIMPORTER_API AMeshLoader : public AActor
+class RUNTIMEMODELSIMPORTER_API UAssimpRuntime3DModelsImporter : public UObject
 {
     GENERATED_BODY()
 
 public:
-    AMeshLoader();
+    UAssimpRuntime3DModelsImporter();
     void LoadFBXModel(const FString& FbxFilePath);
-    void ParseNode(aiNode* Node, const aiScene* Scene, FFBXNodeData& OutNode, const FString& FbxFilePath);
+    void ParseNode(aiNode* Node, const aiScene* Scene, FModelNodeData& OutNode, const FString& FbxFilePath);
     AActor* SpawnModel(UWorld* World, const FVector& SpawnLocation);
-    const FFBXNodeData& GetRootNode() const { return RootNode; }
+    const FModelNodeData& GetRootNode() const { return RootNode; }
     void LoadAssimpDLLIfNeeded();
     AActor* GetNodeActorByName(const FString& NodeName) const;
     void SetModelID(const FString& InID) { ModelID = InID; }
@@ -72,9 +72,9 @@ public:
     FString GetModelName() const { return ModelName; }
 
 private:
-    void ExtractMesh(aiMesh* Mesh, const aiScene* Scene, FMeshSectionData& OutMesh, const FString& FbxFilePath);
+    void ExtractMesh(aiMesh* Mesh, const aiScene* Scene, FModelMeshData& OutMesh, const FString& FbxFilePath);
     //UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Model")
-    void SpawnNodeRecursive(const FFBXNodeData& Node, AActor* Parent);
+    void SpawnNodeRecursive(const FModelNodeData& Node, AActor* Parent);
     FTransform ConvertAssimpMatrix(const aiMatrix4x4& AssimpMatrix);
     void LoadMasterMaterial();
     bool IsVectorFinite(const FVector& Vec);
@@ -92,6 +92,6 @@ private:
     FString ModelID = "DefaultModelID";
     FString ModelName = "DefaultModelName";
     FString FilePath;
-    FFBXNodeData RootNode;
+    FModelNodeData RootNode;
 
 };
