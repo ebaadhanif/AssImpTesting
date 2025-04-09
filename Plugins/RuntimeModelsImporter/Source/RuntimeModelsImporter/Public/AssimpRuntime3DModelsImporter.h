@@ -91,5 +91,8 @@ private:
     FString ModelName = "DefaultModelName";
     FString FilePath;
     FModelNodeData RootNode;
+    // Inside UAssimpRuntime3DModelsImporter
+    TMap<aiMaterial*, UMaterialInstanceDynamic*> MaterialCache;
+
 
 };
