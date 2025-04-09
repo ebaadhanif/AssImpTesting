@@ -18,19 +18,33 @@ void AModelAsset::BeginPlay()
 {
     Super::BeginPlay();
     ConfigManager->LoadConfig(ModelsConfigFilepath); 
-    TArray<FString> FbxFiles, GlbFiles;
-    IFileManager::Get().FindFiles(FbxFiles, *(ModelsFolderpath / TEXT("*.fbx")), true, false);
-    IFileManager::Get().FindFiles(GlbFiles, *(ModelsFolderpath / TEXT("*.glb")), true, false);
-    for (const FString& File : FbxFiles)
+    TArray<FString> FoundModelFiles;
+    FString BasePath = ModelsFolderpath;
+    FPaths::NormalizeDirectoryName(BasePath); // Normalize path (slashes)
+
+    if (!FPaths::DirectoryExists(BasePath))
     {
-        FString Path = FPaths::Combine(ModelsFolderpath, File);
-        Initialize3DModel(Path);
+        UE_LOG(LogTemp, Error, TEXT("❌ Models folder does not exist: %s"), *BasePath);
+        return;
     }
-    for (const FString& File : GlbFiles)
+
+    TArray<FString> Extensions = { TEXT("*.fbx"), TEXT("*.glb"), TEXT("*.obj"), TEXT("*.dae"), TEXT("*.3ds"), TEXT("*.stl") };
+
+    for (const FString& Ext : Extensions)
     {
-        FString Path = FPaths::Combine(ModelsFolderpath, File);
-        Initialize3DModel(Path);
+        TArray<FString> TempFiles;
+        IFileManager::Get().FindFilesRecursive(TempFiles, *BasePath, *Ext, true, false);
+        FoundModelFiles.Append(TempFiles);
     }
+
+    // Final list of valid model paths
+    for (const FString& FilePath : FoundModelFiles)
+    {
+        UE_LOG(LogTemp, Display, TEXT("✅ Found model: %s"), *FilePath);
+        Initialize3DModel(FilePath);
+    }
+
+
     for (UAssimpRuntime3DModelsImporter* Model : Loaded3DModels)
     {
         SpawnAndConfigure3DModel(Model, FVector::ZeroVector);

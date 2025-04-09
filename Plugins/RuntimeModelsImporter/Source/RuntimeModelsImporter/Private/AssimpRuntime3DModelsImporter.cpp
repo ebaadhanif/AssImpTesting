@@ -221,14 +221,44 @@ UMaterialInstanceDynamic* UAssimpRuntime3DModelsImporter::CreateMaterialFromAssi
                 }
                 else
                 {
+                    FString FileNameOnly = FPaths::GetCleanFilename(Path);
+                    FString FoundTexturePath;
 
-                    FString FullPath = FPaths::Combine(BaseDir, Path);
-                    FPaths::NormalizeFilename(FullPath);  // ✅ fix mixed slashes
-                    if (!FPaths::FileExists(FullPath))
+                    // Search recursively inside the model folder for the texture
+                    IFileManager& FileManager = IFileManager::Get();
+                    TArray<FString> FoundFiles;
+                    FileManager.FindFilesRecursive(FoundFiles, *FPaths::GetPath(FbxFilePath), *FileNameOnly, true, false);
+
+                    if (FoundFiles.Num() > 0)
                     {
-                        UE_LOG(LogTemp, Warning, TEXT("❌ Texture file not found: %s"), *FullPath);
+                        FoundTexturePath = FoundFiles[0];
+                        UE_LOG(LogTemp, Display, TEXT("✅ Texture found: %s"), *FoundTexturePath);
                     }
-                    Texture = LoadTextureFromDisk(FullPath);
+                    else
+                    {
+                        // Try the direct path if no match found recursively
+                        FoundTexturePath = FPaths::Combine(FPaths::GetPath(FbxFilePath), Path);
+                        FPaths::NormalizeFilename(FoundTexturePath);
+                        if (!FPaths::FileExists(FoundTexturePath))
+                        {
+                            UE_LOG(LogTemp, Warning, TEXT("❌ Texture not found: %s"), *FoundTexturePath);
+                            FoundTexturePath.Empty();
+                        }
+                    }
+
+                    if (!FoundTexturePath.IsEmpty())
+                    {
+                        FString Extension = FPaths::GetExtension(FileNameOnly).ToLower();
+                        if (Extension == "dds")
+                        {
+                            // need to impliment
+                        }
+                        else
+                        {
+                            // png jpg bmp supported by imagewrapper ue5
+                            Texture = LoadTextureFromDisk(FoundTexturePath);
+                        }
+                    }
                 }
 
                 if (Texture)

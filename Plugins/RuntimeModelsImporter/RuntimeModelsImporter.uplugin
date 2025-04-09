@@ -4,7 +4,7 @@
 	"VersionName": "1.0",
 	"FriendlyName": "RuntimeModelsImporter",
 	"Description": "Import Various 3D Models on Runtime in Unreal Engine 5 using Assimp",
-	"Category": "Other",
+	"Category": "Assimp Runtime Models Import",
 	"CreatedBy": "Ebaad",
 	"CreatedByURL": "",
 	"DocsURL": "",
@@ -14,14 +14,14 @@
 	"IsBetaVersion": false,
 	"IsExperimentalVersion": false,
 	"Installed": true,
-	 "Modules": [
-        {
-            "Name": "RuntimeModelsImporter",
-            "Type": "Runtime",
-            "LoadingPhase": "Default"
-        }
-    ],
-    "SupportedTargetPlatforms": [
-        "Win64"
-    ]
+	"Modules": [
+		{
+			"Name": "RuntimeModelsImporter",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		}
+	],
+	"SupportedTargetPlatforms": [
+		"Win64"
+	]
 }
