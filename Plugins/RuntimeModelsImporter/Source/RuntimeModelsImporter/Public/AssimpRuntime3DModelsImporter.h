@@ -1,7 +1,5 @@
-// Fill out your copyright notice in the Description page of Project Settings.
-
+// Class Added by Ebaad, This class deals with Model Raw Data Extraction using Assimp , Creating Model From that Data and Spawning on Demand in Scene On Certain Location
 #pragma once
-
 #include "CoreMinimal.h"
 #include "UObject/NoExportTypes.h"
 #include "GameFramework/Actor.h"

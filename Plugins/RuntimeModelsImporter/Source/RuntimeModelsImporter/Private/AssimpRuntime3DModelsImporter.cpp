@@ -1,6 +1,4 @@
-﻿// Fill out your copyright notice in the Description page of Project Settings.
-
-
+﻿// Class Added by Ebaad, This class deals with Model Raw Data Extraction using Assimp , Creating Model From that Data and Spawning on Demand in Scene On Certain Location
 #include "AssimpRuntime3DModelsImporter.h"
 #include "ProceduralMeshComponent.h"
 #include "Engine/World.h"
@@ -151,13 +149,24 @@ void UAssimpRuntime3DModelsImporter::SpawnNodeRecursive(const FModelNodeData& No
     }
 }
 
-FTransform UAssimpRuntime3DModelsImporter::ConvertAssimpMatrix(const aiMatrix4x4& M) {
-    FMatrix Matrix(
-        FPlane(M.a1, M.a2, M.a3, M.a4),
-        FPlane(M.b1, M.b2, M.b3, M.b4),
-        FPlane(M.c1, M.c2, M.c3, M.c4),
-        FPlane(M.d1, M.d2, M.d3, M.d4));
-    return FTransform(FQuat(Matrix.Rotator()), FVector(Matrix.M[3][0], Matrix.M[3][1], Matrix.M[3][2]), Matrix.GetScaleVector());
+FTransform UAssimpRuntime3DModelsImporter::ConvertAssimpMatrix(const aiMatrix4x4& AssimpMatrix)
+{
+    aiVector3D Scaling, Position;
+    aiQuaternion Rotation;
+
+    AssimpMatrix.Decompose(Scaling, Rotation, Position);
+
+    FVector UE_Position = FVector(Position.x, Position.y, Position.z);
+    FQuat UE_Rotation = FQuat(Rotation.x, Rotation.y, Rotation.z, Rotation.w);
+    FVector UE_Scale = FVector(Scaling.x, Scaling.y, Scaling.z);
+
+    // Optional Fix: Flip Y/Z for coordinate system compatibility
+    // (Unreal is Z-up, Y-forward. FBX is usually Z-up, GLTF is Y-up)
+    UE_Position = FVector(UE_Position.X, UE_Position.Z, UE_Position.Y); // Swap Y & Z
+    UE_Rotation = FQuat(UE_Rotation.X, UE_Rotation.Z, UE_Rotation.Y, -UE_Rotation.W); // Adjust axes
+    UE_Scale = FVector(UE_Scale.X, UE_Scale.Z, UE_Scale.Y); // Swap Y & Z for scale too
+
+    return FTransform(UE_Rotation, UE_Position, UE_Scale);
 }
 
 void UAssimpRuntime3DModelsImporter::LoadMasterMaterial()
