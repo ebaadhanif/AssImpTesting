@@ -197,9 +197,7 @@ UMaterialInstanceDynamic* UAssimpRuntime3DModelsImporter::CreateMaterialFromAssi
 
     // ✅ Reuse material if already processed
     if (MaterialCache.Contains(AssimpMaterial))
-    {
         return MaterialCache[AssimpMaterial];
-    }
 
     // ✅ Load base material
     if (!MasterMaterial)
@@ -230,10 +228,10 @@ UMaterialInstanceDynamic* UAssimpRuntime3DModelsImporter::CreateMaterialFromAssi
     {
         FLinearColor Color(DiffuseColor.r, DiffuseColor.g, DiffuseColor.b);
         MatInstance->SetVectorParameterValue("BaseColor", Color);
-        UE_LOG(LogTemp, Log, TEXT("🎨 Fallback color set: R=%.2f G=%.2f B=%.2f"), Color.R, Color.G, Color.B);
+        UE_LOG(LogTemp, Warning, TEXT("🎨 Diffuse Fallback Color: R=%.2f G=%.2f B=%.2f"), Color.R, Color.G, Color.B);
     }
 
-    // 📦 Texture handling
+    // 📦 Texture mapping function with logging
     auto TryApplyTexture = [&](aiTextureType Type, const FName& ParamName, const FName& EnableParamName)
         {
             aiString TexPath;
@@ -242,13 +240,16 @@ UMaterialInstanceDynamic* UAssimpRuntime3DModelsImporter::CreateMaterialFromAssi
                 FString Path = UTF8_TO_TCHAR(TexPath.C_Str());
                 UTexture2D* Texture = nullptr;
 
+                // Handle embedded texture
                 if (Path.StartsWith(TEXT("*")))
                 {
                     const aiTexture* Embedded = Scene->GetEmbeddedTexture(TexPath.C_Str());
                     Texture = CreateTextureFromEmbedded(Embedded, Path, Type);
+                    UE_LOG(LogTemp, Log, TEXT("📦 Using embedded texture for %s: %s"), *ParamName.ToString(), *Path);
                 }
                 else
                 {
+                    // Handle external texture
                     FString FileNameOnly = FPaths::GetCleanFilename(Path);
                     FString FoundTexturePath;
 
@@ -264,13 +265,16 @@ UMaterialInstanceDynamic* UAssimpRuntime3DModelsImporter::CreateMaterialFromAssi
                     {
                         FoundTexturePath = FPaths::Combine(BaseDir, Path);
                         FPaths::NormalizeFilename(FoundTexturePath);
-                        if (!FPaths::FileExists(FoundTexturePath))
-                            FoundTexturePath.Empty();
                     }
 
-                    if (!FoundTexturePath.IsEmpty())
+                    if (!FoundTexturePath.IsEmpty() && FPaths::FileExists(FoundTexturePath))
                     {
                         Texture = LoadTextureFromDisk(FoundTexturePath);
+                        UE_LOG(LogTemp, Log, TEXT("🖼️ Found external texture for %s: %s"), *ParamName.ToString(), *FoundTexturePath);
+                    }
+                    else
+                    {
+                        UE_LOG(LogTemp, Warning, TEXT("❌ Texture file not found for %s → %s"), *ParamName.ToString(), *Path);
                     }
                 }
 
@@ -279,16 +283,16 @@ UMaterialInstanceDynamic* UAssimpRuntime3DModelsImporter::CreateMaterialFromAssi
                     MatInstance->SetTextureParameterValue(ParamName, Texture);
                     if (!EnableParamName.IsNone())
                         MatInstance->SetScalarParameterValue(EnableParamName, 1.0f);
-                    UE_LOG(LogTemp, Log, TEXT("✅ Applied texture: %s → %s"), *Path, *ParamName.ToString());
+                    UE_LOG(LogTemp, Display, TEXT("✅ Texture applied to %s | Enable: %s = 1"), *ParamName.ToString(), *EnableParamName.ToString());
                 }
-                else
-                {
-                    UE_LOG(LogTemp, Warning, TEXT("❌ Texture not found or failed to load: %s (%s)"), *Path, *ParamName.ToString());
-                }
+            }
+            else
+            {
+                UE_LOG(LogTemp, Log, TEXT("⚠️ No texture assigned for %s (aiTextureType %d)"), *ParamName.ToString(), (int32)Type);
             }
         };
 
-    // 🔍 Texture channels
+    // 🔍 Texture channels with logging
     TryApplyTexture(aiTextureType_DIFFUSE, "BaseColorTex", "UseBaseColorTex");
     TryApplyTexture(aiTextureType_BASE_COLOR, "BaseColorTex", "UseBaseColorTex");
     TryApplyTexture(aiTextureType_NORMALS, "NormalMap", "UseNormalMap");
@@ -300,29 +304,54 @@ UMaterialInstanceDynamic* UAssimpRuntime3DModelsImporter::CreateMaterialFromAssi
     TryApplyTexture(aiTextureType_DIFFUSE_ROUGHNESS, "RoughnessMap", "UseRoughnessMap");
     TryApplyTexture(aiTextureType_OPACITY, "OpacityMap", "UseOpacityMap");
 
-    // ⚙️ Scalar parameter fallbacks
+    // ⚙️ Scalar fallback logging for all items in material except BaseTex and Normal Text   
     float Metallic = 0.0f;
     if (AssimpMaterial->Get(AI_MATKEY_METALLIC_FACTOR, Metallic) == AI_SUCCESS)
+    {
         MatInstance->SetScalarParameterValue("Metallic", Metallic);
-
-    float Roughness = 0.5f;
-    if (AssimpMaterial->Get(AI_MATKEY_ROUGHNESS_FACTOR, Roughness) == AI_SUCCESS)
-        MatInstance->SetScalarParameterValue("Roughness", Roughness);
+        UE_LOG(LogTemp, Log, TEXT("⚙️ Metallic fallback scalar used: %.2f"), Metallic);
+    }
 
     aiColor3D SpecularColor;
     if (AssimpMaterial->Get(AI_MATKEY_COLOR_SPECULAR, SpecularColor) == AI_SUCCESS)
-        MatInstance->SetVectorParameterValue("SpecularColor", FLinearColor(SpecularColor.r, SpecularColor.g, SpecularColor.b));
+    {
+        FLinearColor SpecColor(SpecularColor.r, SpecularColor.g, SpecularColor.b);
+        MatInstance->SetVectorParameterValue("SpecularColor", SpecColor);
+        UE_LOG(LogTemp, Log, TEXT("🎯 Specular Color fallback: R=%.2f G=%.2f B=%.2f"), SpecColor.R, SpecColor.G, SpecColor.B);
+    }
+
+    float Roughness = 0.5f;
+    if (AssimpMaterial->Get(AI_MATKEY_ROUGHNESS_FACTOR, Roughness) == AI_SUCCESS)
+    {
+        MatInstance->SetScalarParameterValue("Roughness", Roughness);
+        UE_LOG(LogTemp, Log, TEXT("⚙️ Roughness fallback scalar used: %.2f"), Roughness);
+    }
 
     aiColor3D EmissiveColor;
     if (AssimpMaterial->Get(AI_MATKEY_COLOR_EMISSIVE, EmissiveColor) == AI_SUCCESS)
-        MatInstance->SetVectorParameterValue("EmissiveColor", FLinearColor(EmissiveColor.r, EmissiveColor.g, EmissiveColor.b));
+    {
+        FLinearColor Emissive(EmissiveColor.r, EmissiveColor.g, EmissiveColor.b);
+        MatInstance->SetVectorParameterValue("EmissiveColor", Emissive);
+        UE_LOG(LogTemp, Log, TEXT("🌟 Emissive fallback: R=%.2f G=%.2f B=%.2f"), Emissive.R, Emissive.G, Emissive.B);
+    }
 
     float Opacity = 1.0f;
     if (AssimpMaterial->Get(AI_MATKEY_OPACITY, Opacity) == AI_SUCCESS)
+    {
         MatInstance->SetScalarParameterValue("Opacity", Opacity);
+        UE_LOG(LogTemp, Log, TEXT("🔍 Opacity fallback scalar: %.2f"), Opacity);
+    }
+
+    float AO = 1.0f;
+    if (AssimpMaterial->Get(AI_MATKEY_OPACITY, AO) == AI_SUCCESS)
+    {
+        MatInstance->SetScalarParameterValue("AO", AO);
+        UE_LOG(LogTemp, Log, TEXT("🔍 AO fallback scalar: %.2f"), AO);
+    }
 
     return MatInstance;
 }
+
 
 
 UTexture2D* UAssimpRuntime3DModelsImporter::CreateTextureFromEmbedded(const aiTexture* EmbeddedTex, const FString& DebugName, aiTextureType Type)
@@ -530,136 +559,6 @@ AActor* UAssimpRuntime3DModelsImporter::GetNodeActorByName(const FString& NodeNa
 
 
 
-//UMaterialInstanceDynamic* UAssimpRuntime3DModelsImporter::CreateMaterialFromAssimp(aiMaterial* AssimpMaterial, const aiScene* Scene, const FString& FbxFilePath)
-//{
-//    if (!MasterMaterial)
-//        LoadMasterMaterial();
-//    if (!MasterMaterial)
-//    {
-//        UE_LOG(LogTemp, Error, TEXT("❌ No valid master material loaded."));
-//        return nullptr;
-//    }
-//
-//    UMaterialInstanceDynamic* MatInstance = UMaterialInstanceDynamic::Create(MasterMaterial, GetTransientPackage());
-//    if (!MatInstance)
-//    {
-//        UE_LOG(LogTemp, Error, TEXT("❌ Failed to create dynamic material instance."));
-//        return nullptr;
-//    }
-//
-//    LoadedMaterials.Add(MatInstance);
-//    const FString BaseDir = FPaths::GetPath(FbxFilePath);
-//
-//    // Fallback diffuse/base color
-//    aiColor3D DiffuseColor(1.0f, 1.0f, 1.0f);
-//    if (AssimpMaterial->Get(AI_MATKEY_COLOR_DIFFUSE, DiffuseColor) == AI_SUCCESS)
-//    {
-//        MatInstance->SetVectorParameterValue("BaseColor", FLinearColor(DiffuseColor.r, DiffuseColor.g, DiffuseColor.b));
-//    }
-//
-//    auto TryApplyTexture = [&](aiTextureType Type, const FName& ParamName, const FName& EnableParamName)
-//        {
-//            aiString TexPath;
-//            if (AssimpMaterial->GetTexture(Type, 0, &TexPath) == AI_SUCCESS)
-//            {
-//                FString Path = UTF8_TO_TCHAR(TexPath.C_Str());
-//                UTexture2D* Texture = nullptr;
-//
-//                if (Path.StartsWith(TEXT("*")))
-//                {
-//                    const aiTexture* Embedded = Scene->GetEmbeddedTexture(TexPath.C_Str());
-//                    Texture = CreateTextureFromEmbedded(Embedded, Path, Type);
-//                }
-//                else
-//                {
-//                    FString FileNameOnly = FPaths::GetCleanFilename(Path);
-//                    FString SearchPath;
-//                    TArray<FString> Matches;
-//                    IFileManager::Get().FindFilesRecursive(Matches, *BaseDir, *FileNameOnly, true, false);
-//                    if (Matches.Num() > 0)
-//                    {
-//                        SearchPath = Matches[0];
-//                    }
-//                    else
-//                    {
-//                        SearchPath = FPaths::Combine(BaseDir, FileNameOnly);
-//                        if (!FPaths::FileExists(SearchPath))
-//                            SearchPath.Empty();
-//                    }
-//
-//                    if (!SearchPath.IsEmpty())
-//                    {
-//                        FString Ext = FPaths::GetExtension(SearchPath).ToLower();
-//                        if (Ext == "dds")
-//                        {
-//                            // TODO: Implement DDS support
-//                        }
-//                        else
-//                        {
-//                            Texture = LoadTextureFromDisk(SearchPath);
-//                        }
-//                    }
-//                }
-//
-//                if (Texture)
-//                {
-//                    MatInstance->SetTextureParameterValue(ParamName, Texture);
-//                    if (!EnableParamName.IsNone())
-//                        MatInstance->SetScalarParameterValue(EnableParamName, 1.0f);
-//                    UE_LOG(LogTemp, Display, TEXT("✅ Applied texture: %s → %s"), *Path, *ParamName.ToString());
-//                }
-//                else
-//                {
-//                    UE_LOG(LogTemp, Warning, TEXT("❌ Texture not found: %s for %s"), *Path, *ParamName.ToString());
-//                }
-//            }
-//        };
-//
-//    // Textures
-//    TryApplyTexture(aiTextureType_DIFFUSE, "BaseColorTex", "UseBaseColorTex");
-//    TryApplyTexture(aiTextureType_BASE_COLOR, "BaseColorTex", "UseBaseColorTex");
-//    TryApplyTexture(aiTextureType_NORMALS, "NormalMap", "UseNormalMap");
-//    TryApplyTexture(aiTextureType_HEIGHT, "NormalMap", "UseNormalMap"); // fallback
-//    TryApplyTexture(aiTextureType_METALNESS, "MetallicMap", "UseMetallicMap");
-//    TryApplyTexture(aiTextureType_DIFFUSE_ROUGHNESS, "RoughnessMap", "UseRoughnessMap");
-//    TryApplyTexture(aiTextureType_AMBIENT_OCCLUSION, "AOMap", "UseAOMap");
-//    TryApplyTexture(aiTextureType_EMISSIVE, "EmissiveMap", "UseEmissiveMap");
-//    TryApplyTexture(aiTextureType_OPACITY, "OpacityMap", "UseOpacityMap");
-//    TryApplyTexture(aiTextureType_SPECULAR, "SpecularMap", "UseSpecularMap");
-//
-//    // Scalar & color fallback
-//    float Metallic = 0.0f;
-//    if (AssimpMaterial->Get(AI_MATKEY_METALLIC_FACTOR, Metallic) == AI_SUCCESS)
-//    {
-//        MatInstance->SetScalarParameterValue("Metallic", Metallic);
-//    }
-//
-//    float Roughness = 0.5f;
-//    if (AssimpMaterial->Get(AI_MATKEY_ROUGHNESS_FACTOR, Roughness) == AI_SUCCESS)
-//    {
-//        MatInstance->SetScalarParameterValue("Roughness", Roughness);
-//    }
-//
-//    aiColor3D SpecularColor(0.f, 0.f, 0.f);
-//    if (AssimpMaterial->Get(AI_MATKEY_COLOR_SPECULAR, SpecularColor) == AI_SUCCESS)
-//    {
-//        MatInstance->SetVectorParameterValue("SpecularColor", FLinearColor(SpecularColor.r, SpecularColor.g, SpecularColor.b));
-//    }
-//
-//    aiColor3D EmissiveColor(0.f, 0.f, 0.f);
-//    if (AssimpMaterial->Get(AI_MATKEY_COLOR_EMISSIVE, EmissiveColor) == AI_SUCCESS)
-//    {
-//        MatInstance->SetVectorParameterValue("EmissiveColor", FLinearColor(EmissiveColor.r, EmissiveColor.g, EmissiveColor.b));
-//    }
-//
-//    float Opacity = 1.0f;
-//    if (AssimpMaterial->Get(AI_MATKEY_OPACITY, Opacity) == AI_SUCCESS)
-//    {
-//        MatInstance->SetScalarParameterValue("Opacity", Opacity);
-//    }
-//
-//    return MatInstance;
-//}
 
 
 
