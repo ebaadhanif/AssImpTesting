@@ -13,6 +13,10 @@
 #include "Modules/ModuleManager.h"
 #include "Misc/FileHelper.h"
 #include "Materials/MaterialInstanceDynamic.h"
+#include "Windows/AllowWindowsPlatformTypes.h"
+#include "DirectXTex.h"
+#include "Windows/HideWindowsPlatformTypes.h"
+
 
 UAssimpRuntime3DModelsImporter::UAssimpRuntime3DModelsImporter() {
 }
@@ -352,8 +356,6 @@ UMaterialInstanceDynamic* UAssimpRuntime3DModelsImporter::CreateMaterialFromAssi
     return MatInstance;
 }
 
-
-
 UTexture2D* UAssimpRuntime3DModelsImporter::CreateTextureFromEmbedded(const aiTexture* EmbeddedTex, const FString& DebugName, aiTextureType Type)
 
 {
@@ -479,36 +481,191 @@ UTexture2D* UAssimpRuntime3DModelsImporter::CreateTextureFromEmbedded(const aiTe
     return nullptr;
 }
 
-UTexture2D* UAssimpRuntime3DModelsImporter::LoadTextureFromDisk(const FString& FbxFilePath)
+UTexture2D* UAssimpRuntime3DModelsImporter::LoadTextureFromDisk(const FString& TexturePath)
 {
-    if (!FPaths::FileExists(FbxFilePath)) return nullptr;
+    if (!FPaths::FileExists(TexturePath))
+    {
+        UE_LOG(LogTemp, Warning, TEXT("❌ File does not exist: %s"), *TexturePath);
+        return nullptr;
+    }
 
+    FString Extension = FPaths::GetExtension(TexturePath).ToLower();
+
+    if (Extension == "dds")
+    {
+        return LoadDDSTexture(TexturePath); // ✅ Custom DDS logic
+    }
+
+    // Supported by Unreal via ImageWrapper: png, jpg, bmp, tga (not DDS or EXR)
     TArray<uint8> FileData;
-    if (!FFileHelper::LoadFileToArray(FileData, *FbxFilePath)) return nullptr;
+    if (!FFileHelper::LoadFileToArray(FileData, *TexturePath))
+    {
+        UE_LOG(LogTemp, Warning, TEXT("❌ Failed to load texture file: %s"), *TexturePath);
+        return nullptr;
+    }
 
-    IImageWrapperModule& Module = FModuleManager::LoadModuleChecked<IImageWrapperModule>("ImageWrapper");
-    EImageFormat Format = Module.DetectImageFormat(FileData.GetData(), FileData.Num());
-    TSharedPtr<IImageWrapper> Wrapper = Module.CreateImageWrapper(Format);
+    // Detect format
+    IImageWrapperModule& ImageWrapperModule = FModuleManager::LoadModuleChecked<IImageWrapperModule>("ImageWrapper");
+    EImageFormat Format = ImageWrapperModule.DetectImageFormat(FileData.GetData(), FileData.Num());
 
-    if (!Wrapper.IsValid() || !Wrapper->SetCompressed(FileData.GetData(), FileData.Num())) return nullptr;
+    if (Format == EImageFormat::Invalid)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("❌ Unsupported image format: %s"), *TexturePath);
+        return nullptr;
+    }
+
+    TSharedPtr<IImageWrapper> Wrapper = ImageWrapperModule.CreateImageWrapper(Format);
+
+    if (!Wrapper.IsValid() || !Wrapper->SetCompressed(FileData.GetData(), FileData.Num()))
+    {
+        UE_LOG(LogTemp, Warning, TEXT("❌ Failed to decode image data: %s"), *TexturePath);
+        return nullptr;
+    }
 
     TArray64<uint8> RawData;
-    if (!Wrapper->GetRaw(ERGBFormat::BGRA, 8, RawData)) return nullptr;
+    if (!Wrapper->GetRaw(ERGBFormat::BGRA, 8, RawData))
+    {
+        UE_LOG(LogTemp, Warning, TEXT("❌ Failed to extract raw BGRA pixels: %s"), *TexturePath);
+        return nullptr;
+    }
 
-    int32 Width = Wrapper->GetWidth();
-    int32 Height = Wrapper->GetHeight();
+    const int32 Width = Wrapper->GetWidth();
+    const int32 Height = Wrapper->GetHeight();
+    if (Width <= 0 || Height <= 0)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("❌ Invalid image dimensions: %s"), *TexturePath);
+        return nullptr;
+    }
 
-    UTexture2D* Texture = UTexture2D::CreateTransient(Width, Height);
-    if (!Texture) return nullptr;
+    UTexture2D* Texture = UTexture2D::CreateTransient(Width, Height, PF_B8G8R8A8);
+    if (!Texture)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("❌ Failed to create transient texture: %s"), *TexturePath);
+        return nullptr;
+    }
 
-    void* TextureData = Texture->GetPlatformData()->Mips[0].BulkData.Lock(LOCK_READ_WRITE);
+#if WITH_EDITORONLY_DATA
+    Texture->MipGenSettings = TMGS_NoMipmaps; // Optional: allow mip generation from disk if needed
+#endif
+    Texture->NeverStream = true;
+    Texture->SRGB = true; // Most likely sRGB for color maps
+
+    FTexture2DMipMap& Mip = Texture->GetPlatformData()->Mips[0];
+    void* TextureData = Mip.BulkData.Lock(LOCK_READ_WRITE);
     FMemory::Memcpy(TextureData, RawData.GetData(), RawData.Num());
-    Texture->GetPlatformData()->Mips[0].BulkData.Unlock();
+    Mip.BulkData.Unlock();
 
     Texture->UpdateResource();
     Texture->SetFlags(RF_Transient);
+
+    UE_LOG(LogTemp, Display, TEXT("✅ Loaded texture: %s (%dx%d)"), *TexturePath, Width, Height);
     return Texture;
 }
+
+UTexture2D* UAssimpRuntime3DModelsImporter::LoadDDSTexture(const FString& DDSTexture)
+{
+    if (!FPaths::FileExists(DDSTexture))
+    {
+        UE_LOG(LogTemp, Error, TEXT("❌ DDS file not found: %s"), *DDSTexture);
+        return nullptr;
+    }
+
+    DirectX::ScratchImage ScratchImage;
+    std::wstring WPath = *DDSTexture;
+    HRESULT Hr = DirectX::LoadFromDDSFile(WPath.c_str(), DirectX::DDS_FLAGS_NONE, nullptr, ScratchImage);
+    if (FAILED(Hr))
+    {
+        UE_LOG(LogTemp, Error, TEXT("❌ Failed to load DDS file: %s"), *DDSTexture);
+        return nullptr;
+    }
+
+    const DirectX::TexMetadata& Meta = ScratchImage.GetMetadata();
+    const DXGI_FORMAT TargetFormat = DXGI_FORMAT_B8G8R8A8_UNORM;
+
+    DirectX::ScratchImage FinalImage;
+    const bool bNeedsDecompress = DirectX::IsCompressed(Meta.format);
+    const bool bNeedsConvert = Meta.format != TargetFormat;
+
+    if (bNeedsDecompress)
+    {
+        Hr = DirectX::Decompress(ScratchImage.GetImages(), ScratchImage.GetImageCount(), Meta, TargetFormat, FinalImage);
+    }
+    else if (bNeedsConvert)
+    {
+        Hr = DirectX::Convert(ScratchImage.GetImages(), ScratchImage.GetImageCount(), Meta, TargetFormat, DirectX::TEX_FILTER_DEFAULT, 0.f, FinalImage);
+    }
+    else
+    {
+        FinalImage = std::move(ScratchImage);
+        Hr = S_OK;
+    }
+
+    if (FAILED(Hr))
+    {
+        UE_LOG(LogTemp, Error, TEXT("❌ Failed to convert DDS to target format: %s"), *DDSTexture);
+        return nullptr;
+    }
+
+    const DirectX::TexMetadata& FinalMeta = FinalImage.GetMetadata();
+    const uint32 Width = static_cast<uint32>(FinalMeta.width);
+    const uint32 Height = static_cast<uint32>(FinalMeta.height);
+    const uint32 MipLevels = static_cast<uint32>(FinalMeta.mipLevels);
+
+    UTexture2D* Texture = UTexture2D::CreateTransient(Width, Height, PF_B8G8R8A8);
+    if (!Texture)
+    {
+        UE_LOG(LogTemp, Error, TEXT("❌ Failed to create texture: %s"), *DDSTexture);
+        return nullptr;
+    }
+
+    FTexturePlatformData* PlatformData = Texture->GetPlatformData();
+    PlatformData->Mips.Empty();
+    PlatformData->SizeX = Width;
+    PlatformData->SizeY = Height;
+    PlatformData->PixelFormat = PF_B8G8R8A8;
+
+    for (uint32 MipIndex = 0; MipIndex < MipLevels; ++MipIndex)
+    {
+        const DirectX::Image* MipImage = FinalImage.GetImage(MipIndex, 0, 0);
+        if (!MipImage || !MipImage->pixels)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("⚠️ Skipping invalid mip level %u"), MipIndex);
+            continue;
+        }
+
+        FTexture2DMipMap* Mip = new FTexture2DMipMap();
+        Mip->SizeX = MipImage->width;
+        Mip->SizeY = MipImage->height;
+
+        Mip->BulkData.Lock(LOCK_READ_WRITE);
+        void* Dest = Mip->BulkData.Realloc(MipImage->slicePitch);
+        FMemory::Memcpy(Dest, MipImage->pixels, MipImage->slicePitch);
+        Mip->BulkData.Unlock();
+
+        PlatformData->Mips.Add(Mip);
+    }
+
+    Texture->NeverStream = true;
+    Texture->SRGB = false;
+
+#if WITH_EDITORONLY_DATA
+    Texture->MipGenSettings = TMGS_NoMipmaps; // Already using loaded mips
+#endif
+
+    Texture->UpdateResource();
+    Texture->AddToRoot();
+
+    UE_LOG(LogTemp, Display, TEXT("✅ DDS loaded with mipmaps: %s (%ux%u Mips=%u)"), *DDSTexture, Width, Height, MipLevels);
+    return Texture;
+}
+
+
+
+
+
+
+
+
 
 bool UAssimpRuntime3DModelsImporter::IsVectorFinite(const FVector& Vec)
 {
@@ -555,6 +712,10 @@ AActor* UAssimpRuntime3DModelsImporter::GetNodeActorByName(const FString& NodeNa
     }
     return nullptr;
 }
+
+
+
+
 
 
 

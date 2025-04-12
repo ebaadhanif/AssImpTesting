@@ -42,5 +42,9 @@ public class RuntimeModelsImporter : ModuleRules
 
         // ✅ Enable RTTI (Assimp uses dynamic_cast etc.)
         bUseRTTI = true;
+		
+		PublicIncludePaths.Add(Path.Combine(ModuleDirectory, "ThirdParty/DirectXTex/Include"));
+		PublicAdditionalLibraries.Add(Path.Combine(ModuleDirectory, "ThirdParty/DirectXTex/Lib/Win64/DirectXTex.lib"));
+
     }
 }

@@ -64,6 +64,7 @@ public:
     const FModelNodeData& GetRootNode() const { return RootNode; }
     void LoadAssimpDLLIfNeeded();
     AActor* GetNodeActorByName(const FString& NodeName) const;
+    UTexture2D* LoadDDSTexture(const FString& DDSTexture);
     void SetModelID(const FString& InID) { ModelID = InID; }
     FString GetModelID() const { return ModelID; }
     void SetModelName(const FString& InName) { ModelName = InName; }
@@ -96,3 +97,4 @@ private:
 
 
 };
+
