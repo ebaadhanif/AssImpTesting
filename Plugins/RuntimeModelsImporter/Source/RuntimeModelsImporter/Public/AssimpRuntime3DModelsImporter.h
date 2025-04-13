@@ -51,6 +51,8 @@ struct FModelNodeData
     TArray<FModelNodeData> Children;
     TArray<FModelMeshData> MeshSections;
 };
+
+
 UCLASS()
 class RUNTIMEMODELSIMPORTER_API UAssimpRuntime3DModelsImporter : public UObject
 {
@@ -64,6 +66,7 @@ public:
     const FModelNodeData& GetRootNode() const { return RootNode; }
     void LoadAssimpDLLIfNeeded();
     AActor* GetNodeActorByName(const FString& NodeName) const;
+
     UTexture2D* LoadDDSTexture(const FString& DDSTexture);
     void SetModelID(const FString& InID) { ModelID = InID; }
     FString GetModelID() const { return ModelID; }
@@ -94,7 +97,6 @@ private:
     FModelNodeData RootNode;
     // Inside UAssimpRuntime3DModelsImporter
     TMap<aiMaterial*, UMaterialInstanceDynamic*> MaterialCache;
-
 
 };
 

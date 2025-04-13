@@ -11,7 +11,6 @@ AModelAsset::AModelAsset()
 void AModelAsset::Tick(float DeltaTime)
 {
     Super::Tick(DeltaTime);
-
 }
 
 void AModelAsset::BeginPlay()

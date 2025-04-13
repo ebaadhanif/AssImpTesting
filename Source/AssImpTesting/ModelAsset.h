@@ -27,12 +27,14 @@ public:
 	// Called every frame
 	virtual void Tick(float DeltaTime) override;
 private:
+	// CRITICAL FIX: Ensure GC doesn't remove these!
+	UPROPERTY()
 	TArray<UAssimpRuntime3DModelsImporter*> Loaded3DModels;
-
 	UPROPERTY()
 	UModelsConfigManager* ConfigManager;
 
 	FString ExtractModelNameFromPath(const FString& Path);
 	void Initialize3DModel(FString Path);
 	void SpawnAndConfigure3DModel(UAssimpRuntime3DModelsImporter* Model, const FVector& SpawnLocation);
+	
 };

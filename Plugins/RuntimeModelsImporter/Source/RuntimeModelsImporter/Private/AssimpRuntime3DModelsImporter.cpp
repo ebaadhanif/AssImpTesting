@@ -16,45 +16,14 @@
 #include "Windows/AllowWindowsPlatformTypes.h"
 #include "DirectXTex.h"
 #include "Windows/HideWindowsPlatformTypes.h"
-
+#include "Kismet/GameplayStatics.h"
 
 UAssimpRuntime3DModelsImporter::UAssimpRuntime3DModelsImporter() {
-}
-
-void UAssimpRuntime3DModelsImporter::LoadFBXModel(const FString& InFilePath)
-{
-    FilePath = InFilePath;
-    ModelName = FPaths::GetBaseFilename(FilePath);
-
-    Assimp::Importer Importer;
-    const aiScene* Scene = Importer.ReadFile(TCHAR_TO_UTF8(*FilePath),
-        aiProcess_Triangulate |
-        aiProcess_GenNormals |
-        aiProcess_CalcTangentSpace |
-        aiProcess_JoinIdenticalVertices |
-        aiProcess_ImproveCacheLocality |
-        aiProcess_OptimizeMeshes |
-        aiProcess_FlipUVs);
-
-    if (!Scene || !Scene->mRootNode)
-    {
-        UE_LOG(LogTemp, Error, TEXT("❌ Failed to load FBX: %s"), *FilePath);
-        return;
-    }
-
-    RootNode = FModelNodeData();
-    ParseNode(Scene->mRootNode, Scene, RootNode, FilePath);
 }
 
 void UAssimpRuntime3DModelsImporter::ParseNode(aiNode* Node, const aiScene* Scene, FModelNodeData& OutNode, const FString& FbxFilePath) {
     OutNode.Name = UTF8_TO_TCHAR(Node->mName.C_Str());
     OutNode.Transform = ConvertAssimpMatrix(Node->mTransformation);
-    if (FbxFilePath.EndsWith(".glb") || FbxFilePath.EndsWith(".gltf"))
-    {
-        OutNode.Transform.SetScale3D(FVector(100.0f)); // adjust accordingly
-    }
-
-
     for (uint32 i = 0; i < Node->mNumMeshes; ++i) {
         aiMesh* Mesh = Scene->mMeshes[Node->mMeshes[i]];
         FModelMeshData MeshData;
@@ -69,74 +38,153 @@ void UAssimpRuntime3DModelsImporter::ParseNode(aiNode* Node, const aiScene* Scen
     }
 }
 
-void UAssimpRuntime3DModelsImporter::ExtractMesh(aiMesh* Mesh, const aiScene* Scene, FModelMeshData& OutMesh, const FString& FbxFilePath) {
-    for (uint32 i = 0; i < Mesh->mNumVertices; ++i) {
+void UAssimpRuntime3DModelsImporter::ExtractMesh(aiMesh* Mesh, const aiScene* Scene, FModelMeshData& OutMesh, const FString& FbxFilePath)
+{
+    const bool bHasNormals = Mesh->HasNormals();
+    const bool bHasUVs = Mesh->HasTextureCoords(0);
+
+    for (uint32 i = 0; i < Mesh->mNumVertices; ++i)
+    {
         OutMesh.Vertices.Add(FVector(Mesh->mVertices[i].x, Mesh->mVertices[i].z, Mesh->mVertices[i].y));
-        OutMesh.Normals.Add(FVector(Mesh->mNormals[i].x, Mesh->mNormals[i].z, Mesh->mNormals[i].y));
-        OutMesh.UVs.Add(Mesh->HasTextureCoords(0) ? FVector2D(Mesh->mTextureCoords[0][i].x, Mesh->mTextureCoords[0][i].y) : FVector2D::ZeroVector);
+
+        if (bHasNormals)
+        {
+            OutMesh.Normals.Add(FVector(Mesh->mNormals[i].x, Mesh->mNormals[i].z, Mesh->mNormals[i].y));
+        }
+        else
+        {
+            OutMesh.Normals.Add(FVector::UpVector); // Fallback to upward normal
+        }
+
+        if (bHasUVs)
+        {
+            OutMesh.UVs.Add(FVector2D(Mesh->mTextureCoords[0][i].x, Mesh->mTextureCoords[0][i].y));
+        }
+        else
+        {
+            OutMesh.UVs.Add(FVector2D::ZeroVector);
+        }
     }
-    for (uint32 i = 0; i < Mesh->mNumFaces; ++i) {
+
+    for (uint32 i = 0; i < Mesh->mNumFaces; ++i)
+    {
         const aiFace& Face = Mesh->mFaces[i];
-        if (Face.mNumIndices == 3) {
+        if (Face.mNumIndices == 3)
+        {
             OutMesh.Triangles.Add(Face.mIndices[0]);
             OutMesh.Triangles.Add(Face.mIndices[1]);
             OutMesh.Triangles.Add(Face.mIndices[2]);
         }
     }
-    if (Mesh->mMaterialIndex >= 0 && Scene->mMaterials[Mesh->mMaterialIndex]) {
+
+    if (Mesh->mMaterialIndex >= 0 && Scene->mMaterials[Mesh->mMaterialIndex])
+    {
         OutMesh.Material = CreateMaterialFromAssimp(Scene->mMaterials[Mesh->mMaterialIndex], Scene, FbxFilePath);
     }
 }
 
 AActor* UAssimpRuntime3DModelsImporter::SpawnModel(UWorld* World, const FVector& SpawnLocation)
 {
-    if (!World) return nullptr;
+    if (!World)
+    {
+        UE_LOG(LogTemp, Error, TEXT("❌ Invalid world context in SpawnModel"));
+        return nullptr;
+    }
 
-    // Spawn root actor
+    // Spawn the root container actor
     AActor* RootActor = World->SpawnActor<AActor>(AActor::StaticClass(), SpawnLocation, FRotator::ZeroRotator);
-    RootActor = RootActor;
+    if (!RootActor)
+    {
+        UE_LOG(LogTemp, Error, TEXT("❌ Failed to spawn RootActor"));
+        return nullptr;
+    }
 
 #if WITH_EDITOR
     RootActor->SetActorLabel(ModelName);
 #endif
 
+    // Add root scene component
     USceneComponent* RootComp = NewObject<USceneComponent>(RootActor);
+    if (!RootComp)
+    {
+        UE_LOG(LogTemp, Error, TEXT("❌ Failed to create RootComponent"));
+        RootActor->Destroy();
+        return nullptr;
+    }
+
     RootComp->RegisterComponent();
     RootActor->SetRootComponent(RootComp);
 
-    for (FModelNodeData& Child : RootNode.Children)
+    // ✅ Spawn the entire hierarchy starting from the real RootNode
+    SpawnNodeRecursive(RootNode, RootActor);
+
+    // ✅ Optional debug log
+    UE_LOG(LogTemp, Log, TEXT("✅ Spawned model '%s' with %d nodes"), *ModelName, SpawnedNodeActors.Num());
+
+    // Uncomment to list all spawned nodes
+    /*
+    for (const auto& Pair : SpawnedNodeActors)
     {
-        SpawnNodeRecursive(Child, RootActor);
+        UE_LOG(LogTemp, Log, TEXT("   - Spawned NodeActor: %s"), *Pair.Key);
     }
+    */
 
     return RootActor;
 }
 
 void UAssimpRuntime3DModelsImporter::SpawnNodeRecursive(const FModelNodeData& Node, AActor* Parent)
 {
-    AActor* NodeActor = GetWorld()->SpawnActor<AActor>(AActor::StaticClass());
+    if (!GetWorld() || !Parent)
+    {
+        UE_LOG(LogTemp, Error, TEXT("❌ World or Parent Actor is invalid."));
+        return;
+    }
+
+    // Spawn Actor safely using deferred spawning
+    FActorSpawnParameters SpawnParams;
+    SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+    AActor* NodeActor = GetWorld()->SpawnActorDeferred<AActor>(AActor::StaticClass(), FTransform::Identity, Parent);
+    if (!NodeActor)
+    {
+        UE_LOG(LogTemp, Error, TEXT("❌ Failed to spawn NodeActor for node: %s"), *Node.Name);
+        return;
+    }
+
 #if WITH_EDITOR
     NodeActor->SetActorLabel(Node.Name);
 #endif
 
-    // ✅ Store reference in map
-    SpawnedNodeActors.Add(Node.Name, NodeActor);
-
-    // ✅ Attach and transform setup
+    // Attach and setup root component safely
     USceneComponent* RootComp = NewObject<USceneComponent>(NodeActor);
+    if (!RootComp)
+    {
+        UE_LOG(LogTemp, Error, TEXT("❌ Failed to create RootComp for node: %s"), *Node.Name);
+        NodeActor->Destroy();
+        return;
+    }
+
     RootComp->RegisterComponent();
     NodeActor->SetRootComponent(RootComp);
     NodeActor->AttachToActor(Parent, FAttachmentTransformRules::KeepRelativeTransform);
     NodeActor->SetActorRelativeTransform(Node.Transform);
 
-    // ✅ Create mesh sections
+    // Store reference AFTER verifying NodeActor initialization
+    SpawnedNodeActors.Add(Node.Name, NodeActor);
+
+    // Create mesh sections
     for (const FModelMeshData& Section : Node.MeshSections)
     {
         UProceduralMeshComponent* Mesh = NewObject<UProceduralMeshComponent>(NodeActor);
+        if (!Mesh)
+        {
+            UE_LOG(LogTemp, Error, TEXT("❌ Failed to create MeshComponent for node: %s"), *Node.Name);
+            continue;
+        }
+
         Mesh->RegisterComponent();
         Mesh->AttachToComponent(RootComp, FAttachmentTransformRules::KeepRelativeTransform);
-        NodeActor->AddInstanceComponent(Mesh); // ✅ ADD THIS LINE
-
+        NodeActor->AddInstanceComponent(Mesh);
 
         TArray<FProcMeshTangent> Tangents;
         for (const FVector& Tangent : Section.Tangents)
@@ -144,11 +192,19 @@ void UAssimpRuntime3DModelsImporter::SpawnNodeRecursive(const FModelNodeData& No
             Tangents.Add(FProcMeshTangent(Tangent, false));
         }
 
-        Mesh->CreateMeshSection_LinearColor(0, Section.Vertices, Section.Triangles, Section.Normals, Section.UVs, {}, Tangents, true);
-        Mesh->SetMaterial(0, Section.Material ? Section.Material : LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial")));
+        Mesh->CreateMeshSection_LinearColor(
+            0, Section.Vertices, Section.Triangles, Section.Normals,
+            Section.UVs, {}, Tangents, true
+        );
+
+        Mesh->SetMaterial(0, Section.Material ? Section.Material :
+            LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial")));
     }
 
-    // ✅ Recursively spawn children
+    // Finish spawning to ensure full initialization
+    UGameplayStatics::FinishSpawningActor(NodeActor, NodeActor->GetTransform());
+
+    // Recursively spawn children
     for (const FModelNodeData& Child : Node.Children)
     {
         SpawnNodeRecursive(Child, NodeActor);
@@ -157,20 +213,18 @@ void UAssimpRuntime3DModelsImporter::SpawnNodeRecursive(const FModelNodeData& No
 
 FTransform UAssimpRuntime3DModelsImporter::ConvertAssimpMatrix(const aiMatrix4x4& AssimpMatrix)
 {
-    aiVector3D Scaling, Position;
+    aiVector3D Scale, Position;
     aiQuaternion Rotation;
-
-    AssimpMatrix.Decompose(Scaling, Rotation, Position);
+    AssimpMatrix.Decompose(Scale, Rotation, Position);
 
     FVector UE_Position = FVector(Position.x, Position.y, Position.z);
     FQuat UE_Rotation = FQuat(Rotation.x, Rotation.y, Rotation.z, Rotation.w);
-    FVector UE_Scale = FVector(Scaling.x, Scaling.y, Scaling.z);
+    FVector UE_Scale = FVector(Scale.x, Scale.y, Scale.z);
 
-    // Optional Fix: Flip Y/Z for coordinate system compatibility
-    // (Unreal is Z-up, Y-forward. FBX is usually Z-up, GLTF is Y-up)
-    UE_Position = FVector(UE_Position.X, UE_Position.Z, UE_Position.Y); // Swap Y & Z
-    UE_Rotation = FQuat(UE_Rotation.X, UE_Rotation.Z, UE_Rotation.Y, -UE_Rotation.W); // Adjust axes
-    UE_Scale = FVector(UE_Scale.X, UE_Scale.Z, UE_Scale.Y); // Swap Y & Z for scale too
+    // Standard conversion (GLTF/GLB specific correction)
+    UE_Position = FVector(Position.x, Position.z, Position.y);
+    UE_Rotation = FQuat(Rotation.x, Rotation.z, Rotation.y, -Rotation.w);
+    UE_Scale = FVector(Scale.x, Scale.z, Scale.y);
 
     return FTransform(UE_Rotation, UE_Position, UE_Scale);
 }
@@ -659,14 +713,6 @@ UTexture2D* UAssimpRuntime3DModelsImporter::LoadDDSTexture(const FString& DDSTex
     return Texture;
 }
 
-
-
-
-
-
-
-
-
 bool UAssimpRuntime3DModelsImporter::IsVectorFinite(const FVector& Vec)
 {
     return FMath::IsFinite(Vec.X) && FMath::IsFinite(Vec.Y) && FMath::IsFinite(Vec.Z);
@@ -713,8 +759,30 @@ AActor* UAssimpRuntime3DModelsImporter::GetNodeActorByName(const FString& NodeNa
     return nullptr;
 }
 
+void UAssimpRuntime3DModelsImporter::LoadFBXModel(const FString& InFilePath)
+{
+    FilePath = InFilePath;
+    ModelName = FPaths::GetBaseFilename(FilePath);
 
+    Assimp::Importer Importer;
+    const aiScene* Scene = Importer.ReadFile(TCHAR_TO_UTF8(*FilePath),
+        aiProcess_Triangulate |
+        aiProcess_GenNormals |
+        aiProcess_CalcTangentSpace |
+        aiProcess_JoinIdenticalVertices |
+        aiProcess_ImproveCacheLocality |
+        aiProcess_OptimizeMeshes |
+        aiProcess_FlipUVs);
 
+    if (!Scene || !Scene->mRootNode)
+    {
+        UE_LOG(LogTemp, Error, TEXT("❌ Failed to load FBX: %s"), *FilePath);
+        return;
+    }
+
+    RootNode = FModelNodeData();
+    ParseNode(Scene->mRootNode, Scene, RootNode, FilePath);
+}
 
 
 
