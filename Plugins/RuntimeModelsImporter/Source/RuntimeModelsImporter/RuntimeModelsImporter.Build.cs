@@ -17,8 +17,10 @@ public class RuntimeModelsImporter : ModuleRules
             "StaticMeshDescription", "ImageWrapper"
         });
 
+        string PluginRoot = Path.GetFullPath(Path.Combine(ModuleDirectory, "..", ".."));
+
         // ✅ Path to Assimp inside plugin folder
-        string AssimpPath = Path.Combine(ModuleDirectory, "ThirdParty", "Assimp");
+        string AssimpPath = Path.Combine(PluginRoot, "ThirdParty", "Assimp");
 
         // ✅ Include Assimp headers
         PublicIncludePaths.Add(Path.Combine(AssimpPath, "include"));
@@ -42,9 +44,9 @@ public class RuntimeModelsImporter : ModuleRules
 
         // ✅ Enable RTTI (Assimp uses dynamic_cast etc.)
         bUseRTTI = true;
-		
-		PublicIncludePaths.Add(Path.Combine(ModuleDirectory, "ThirdParty/DirectXTex/Include"));
-		PublicAdditionalLibraries.Add(Path.Combine(ModuleDirectory, "ThirdParty/DirectXTex/Lib/Win64/DirectXTex.lib"));
+
+        PublicIncludePaths.Add(Path.Combine(PluginRoot, "ThirdParty/DirectXTex/Include"));
+        PublicAdditionalLibraries.Add(Path.Combine(PluginRoot, "ThirdParty/DirectXTex/Lib/Win64/DirectXTex.lib"));
 
     }
 }
