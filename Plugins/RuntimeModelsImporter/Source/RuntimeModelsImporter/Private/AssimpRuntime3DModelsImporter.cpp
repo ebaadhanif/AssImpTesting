@@ -83,7 +83,7 @@ void UAssimpRuntime3DModelsImporter::ExtractMesh(aiMesh* Mesh, const aiScene* Sc
     }
 }
 
-AActor* UAssimpRuntime3DModelsImporter::SpawnModel(UWorld* World, const FVector& SpawnLocation)
+AActor* UAssimpRuntime3DModelsImporter::SpawnModel(UWorld* World, const FTransform& modelTransform)
 {
     if (!World)
     {
@@ -92,11 +92,17 @@ AActor* UAssimpRuntime3DModelsImporter::SpawnModel(UWorld* World, const FVector&
     }
 
     // Spawn the root container actor
-    AActor* RootActor = World->SpawnActor<AActor>(AActor::StaticClass(), SpawnLocation, FRotator::ZeroRotator);
+    AActor* RootActor = World->SpawnActor<AActor>(AActor::StaticClass(), modelTransform);
+
     if (!RootActor)
     {
         UE_LOG(LogTemp, Error, TEXT("❌ Failed to spawn RootActor"));
         return nullptr;
+    }
+    else
+    {
+        RootFBXActor = RootActor;
+
     }
 
 #if WITH_EDITOR
@@ -114,6 +120,9 @@ AActor* UAssimpRuntime3DModelsImporter::SpawnModel(UWorld* World, const FVector&
 
     RootComp->RegisterComponent();
     RootActor->SetRootComponent(RootComp);
+    RootActor->SetActorTransform(FTransform(modelTransform));
+
+
 
     // ✅ Spawn the entire hierarchy starting from the real RootNode
     SpawnNodeRecursive(RootNode, RootActor);
@@ -759,7 +768,7 @@ AActor* UAssimpRuntime3DModelsImporter::GetNodeActorByName(const FString& NodeNa
     return nullptr;
 }
 
-void UAssimpRuntime3DModelsImporter::LoadFBXModel(const FString& InFilePath)
+void UAssimpRuntime3DModelsImporter::ImportModel(const FString& InFilePath)
 {
     FilePath = InFilePath;
     ModelName = FPaths::GetBaseFilename(FilePath);
@@ -784,10 +793,41 @@ void UAssimpRuntime3DModelsImporter::LoadFBXModel(const FString& InFilePath)
     ParseNode(Scene->mRootNode, Scene, RootNode, FilePath);
 }
 
+void UAssimpRuntime3DModelsImporter::HideModel()
+{
+    if (RootFBXActor)
+    {
+        RootFBXActor->SetActorHiddenInGame(true);
+        RootFBXActor->SetActorEnableCollision(false);
+        RootFBXActor->SetActorTickEnabled(false);
+    }
 
+    for (const auto& Pair : SpawnedNodeActors)
+    {
+        AActor* NodeActor = Pair.Value;
+        if (!NodeActor) continue;
 
+        NodeActor->SetActorHiddenInGame(true);
+        NodeActor->SetActorEnableCollision(false);
+        NodeActor->SetActorTickEnabled(false);
 
+        TArray<UActorComponent*> Comps;
+        NodeActor->GetComponents(Comps);
+        for (UActorComponent* Comp : Comps)
+        {
+            if (UPrimitiveComponent* Prim = Cast<UPrimitiveComponent>(Comp))
+            {
+                Prim->SetVisibility(false, true);
+                Prim->SetHiddenInGame(true);
+            }
+        }
+    }
+}
 
-
-
-
+void UAssimpRuntime3DModelsImporter::ApplyTransform(const FTransform& modelTransform)
+{
+    if (RootFBXActor)
+    {
+        RootFBXActor->SetActorTransform(modelTransform);
+    }
+}

@@ -60,29 +60,27 @@ class RUNTIMEMODELSIMPORTER_API UAssimpRuntime3DModelsImporter : public UObject
 
 public:
     UAssimpRuntime3DModelsImporter();
-    void LoadFBXModel(const FString& FbxFilePath);
-    void ParseNode(aiNode* Node, const aiScene* Scene, FModelNodeData& OutNode, const FString& FbxFilePath);
-    AActor* SpawnModel(UWorld* World, const FVector& SpawnLocation);
-    const FModelNodeData& GetRootNode() const { return RootNode; }
     void LoadAssimpDLLIfNeeded();
-    AActor* GetNodeActorByName(const FString& NodeName) const;
-
-    UTexture2D* LoadDDSTexture(const FString& DDSTexture);
+    void ImportModel(const FString& InFilePath);
     void SetModelID(const FString& InID) { ModelID = InID; }
     FString GetModelID() const { return ModelID; }
     void SetModelName(const FString& InName) { ModelName = InName; }
     FString GetModelName() const { return ModelName; }
-
+    AActor* SpawnModel(UWorld* World, const FTransform& modelTransform);
+    void ApplyTransform(const FTransform& modelTransform);
+    void HideModel();
+    AActor* GetNodeActorByName(const FString& NodeName) const; // for attaching config
 private:
+    const FModelNodeData& GetRootNode() const { return RootNode; }
+    void ParseNode(aiNode* Node, const aiScene* Scene, FModelNodeData& OutNode, const FString& FbxFilePath);
     void ExtractMesh(aiMesh* Mesh, const aiScene* Scene, FModelMeshData& OutMesh, const FString& FbxFilePath);
-    //UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Model")
+    UTexture2D* LoadDDSTexture(const FString& DDSTexture);
     void SpawnNodeRecursive(const FModelNodeData& Node, AActor* Parent);
     FTransform ConvertAssimpMatrix(const aiMatrix4x4& AssimpMatrix);
     void LoadMasterMaterial();
     bool IsVectorFinite(const FVector& Vec);
     bool IsTransformValid(const FTransform& Transform);
     TMap<FString, AActor*> SpawnedNodeActors;
-
     UTexture2D* LoadTextureFromDisk(const FString& FbxFilePath);
     UMaterialInstanceDynamic* CreateMaterialFromAssimp(aiMaterial* AssimpMaterial, const aiScene* Scene, const FString& FbxFilePath);
     UTexture2D* CreateTextureFromEmbedded(const aiTexture* EmbeddedTex, const FString& DebugName, aiTextureType Type);
@@ -95,8 +93,8 @@ private:
     FString ModelName = "DefaultModelName";
     FString FilePath;
     FModelNodeData RootNode;
-    // Inside UAssimpRuntime3DModelsImporter
     TMap<aiMaterial*, UMaterialInstanceDynamic*> MaterialCache;
+
 
 };
 

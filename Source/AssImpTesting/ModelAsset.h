@@ -16,7 +16,7 @@ class ASSIMPTESTING_API AModelAsset : public AActor
 public:	
 	// Sets default values for this actor's properties
 	AModelAsset();
-	FString ModelsFolderpath = "C:/Users/ebaad/OneDrive/Desktop/FBX Models";
+	FString ModelsFolderpath = "C:/Users/ebaad.hanif/Desktop/FBX Models";
 	FString ModelsConfigFilepath = FPaths::ProjectContentDir() / TEXT("Archive/ModelsConfig.json");
 
 protected:
@@ -32,9 +32,7 @@ private:
 	TArray<UAssimpRuntime3DModelsImporter*> Loaded3DModels;
 	UPROPERTY()
 	UModelsConfigManager* ConfigManager;
-
 	FString ExtractModelNameFromPath(const FString& Path);
 	void Initialize3DModel(FString Path);
-	void SpawnAndConfigure3DModel(UAssimpRuntime3DModelsImporter* Model, const FVector& SpawnLocation);
-	
+	TMap<FString, AActor*> AllEntities;
 };

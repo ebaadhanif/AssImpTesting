@@ -43,10 +43,14 @@ void AModelAsset::BeginPlay()
         Initialize3DModel(FilePath);
     }
 
-
     for (UAssimpRuntime3DModelsImporter* Model : Loaded3DModels)
     {
-        SpawnAndConfigure3DModel(Model, FVector::ZeroVector);
+        FVector location = FVector(100, 100, 100);        
+        FRotator rotation = FRotator(0, 0, 0);                    
+        FVector scale = FVector(1000, 1000, 1000);                         
+        FTransform modelTransform = FTransform(rotation, location, scale);
+        Model->SpawnModel(GetWorld(), modelTransform);
+       // Model->HideModel(); 
     }
 }
 
@@ -56,22 +60,17 @@ void AModelAsset::Initialize3DModel(FString Path)
     if (Model)
     {
         Model->LoadAssimpDLLIfNeeded();
-        Model->LoadFBXModel(Path);
+        Model->ImportModel(Path);
         Model->SetModelName(ExtractModelNameFromPath(Path));
         Loaded3DModels.Add(Model);
     }
 }
 
-void AModelAsset::SpawnAndConfigure3DModel(UAssimpRuntime3DModelsImporter* Model, const FVector& SpawnLocation)
-{
-    Model->SpawnModel(GetWorld(), SpawnLocation);
-    if (ConfigManager)
-    {
-        ConfigManager->AttachConfigToModel(Model);
-    }
-}
 
 FString AModelAsset::ExtractModelNameFromPath(const FString& Path)
 {
     return FPaths::GetBaseFilename(Path);
 }
+
+
+
