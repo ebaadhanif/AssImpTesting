@@ -75,7 +75,7 @@ private:
     void ParseNode(aiNode* Node, const aiScene* Scene, FModelNodeData& OutNode, const FString& FbxFilePath);
     void ExtractMesh(aiMesh* Mesh, const aiScene* Scene, FModelMeshData& OutMesh, const FString& FbxFilePath);
     UTexture2D* LoadDDSTexture(const FString& DDSTexture);
-    void SpawnNodeRecursive(const FModelNodeData& Node, AActor* Parent);
+    void SpawnNodeRecursive(UWorld* World,const FModelNodeData& Node, AActor* Parent);
     FTransform ConvertAssimpMatrix(const aiMatrix4x4& AssimpMatrix);
     void LoadMasterMaterial();
     bool IsVectorFinite(const FVector& Vec);

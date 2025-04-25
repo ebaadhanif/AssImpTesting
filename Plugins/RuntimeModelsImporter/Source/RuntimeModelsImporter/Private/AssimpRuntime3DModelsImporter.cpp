@@ -125,7 +125,7 @@ AActor* UAssimpRuntime3DModelsImporter::SpawnModel(UWorld* World, const FTransfo
 
 
     // ✅ Spawn the entire hierarchy starting from the real RootNode
-    SpawnNodeRecursive(RootNode, RootActor);
+    SpawnNodeRecursive(World,RootNode, RootActor);
 
     // ✅ Optional debug log
     UE_LOG(LogTemp, Log, TEXT("✅ Spawned model '%s' with %d nodes"), *ModelName, SpawnedNodeActors.Num());
@@ -141,9 +141,9 @@ AActor* UAssimpRuntime3DModelsImporter::SpawnModel(UWorld* World, const FTransfo
     return RootActor;
 }
 
-void UAssimpRuntime3DModelsImporter::SpawnNodeRecursive(const FModelNodeData& Node, AActor* Parent)
+void UAssimpRuntime3DModelsImporter::SpawnNodeRecursive(UWorld* World,const FModelNodeData& Node, AActor* Parent)
 {
-    if (!GetWorld() || !Parent)
+    if (!World || !Parent)
     {
         UE_LOG(LogTemp, Error, TEXT("❌ World or Parent Actor is invalid."));
         return;
@@ -153,7 +153,7 @@ void UAssimpRuntime3DModelsImporter::SpawnNodeRecursive(const FModelNodeData& No
     FActorSpawnParameters SpawnParams;
     SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 
-    AActor* NodeActor = GetWorld()->SpawnActorDeferred<AActor>(AActor::StaticClass(), FTransform::Identity, Parent);
+    AActor* NodeActor = World->SpawnActorDeferred<AActor>(AActor::StaticClass(), FTransform::Identity, Parent);
     if (!NodeActor)
     {
         UE_LOG(LogTemp, Error, TEXT("❌ Failed to spawn NodeActor for node: %s"), *Node.Name);
@@ -216,7 +216,7 @@ void UAssimpRuntime3DModelsImporter::SpawnNodeRecursive(const FModelNodeData& No
     // Recursively spawn children
     for (const FModelNodeData& Child : Node.Children)
     {
-        SpawnNodeRecursive(Child, NodeActor);
+        SpawnNodeRecursive(World,Child, NodeActor);
     }
 }
 
