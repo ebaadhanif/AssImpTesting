@@ -68,22 +68,24 @@ public:
     FString GetModelName() const { return ModelName; }
     AActor* SpawnModel(UWorld* World, const FTransform& modelTransform);
     void ApplyTransform(const FTransform& modelTransform);
+    void DebugAllTexturesInScene(const aiScene* Scene, const FString& InFilePath);
+    FString GetTextureTypeName(aiTextureType Type);
     void HideModel();
     AActor* GetNodeActorByName(const FString& NodeName) const; // for attaching config
 private:
     const FModelNodeData& GetRootNode() const { return RootNode; }
     void ParseNode(aiNode* Node, const aiScene* Scene, FModelNodeData& OutNode, const FString& FbxFilePath);
     void ExtractMesh(aiMesh* Mesh, const aiScene* Scene, FModelMeshData& OutMesh, const FString& FbxFilePath);
-    UTexture2D* LoadDDSTexture(const FString& DDSTexture);
     void SpawnNodeRecursive(UWorld* World,const FModelNodeData& Node, AActor* Parent);
     FTransform ConvertAssimpMatrix(const aiMatrix4x4& AssimpMatrix);
     void LoadMasterMaterial();
     bool IsVectorFinite(const FVector& Vec);
     bool IsTransformValid(const FTransform& Transform);
     TMap<FString, AActor*> SpawnedNodeActors;
-    UTexture2D* LoadTextureFromDisk(const FString& FbxFilePath);
     UMaterialInstanceDynamic* CreateMaterialFromAssimp(aiMaterial* AssimpMaterial, const aiScene* Scene, const FString& FbxFilePath);
-    UTexture2D* CreateTextureFromEmbedded(const aiTexture* EmbeddedTex, const FString& DebugName, aiTextureType Type);
+    UTexture2D* CreateTextureFromEmbedded(const aiTexture* EmbeddedTex, const FString& DebugName, aiTextureType Type, const FString& MaterialName, const FName& ParamName);
+    UTexture2D* LoadTextureFromDisk(const FString& TexturePath, const FString& MaterialName, const FName& ParamName, aiTextureType Type);
+    UTexture2D* LoadDDSTexture(const FString& DDSTexture, aiTextureType Type);
     UPROPERTY()
     TArray<UMaterialInstanceDynamic*> LoadedMaterials;
     UPROPERTY()

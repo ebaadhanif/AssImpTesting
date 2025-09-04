@@ -45,10 +45,13 @@ void AModelAsset::BeginPlay()
 
     for (UAssimpRuntime3DModelsImporter* Model : Loaded3DModels)
     {
-        FVector location = FVector(100, 100, 100);        
+       // FVector location = FVector(100, 100, 100);    
+        FVector location = FVector(336890.000000, -438060.000000, -30100.000000);
         FRotator rotation = FRotator(0, 0, 0);                    
-        FVector scale = FVector(1000, 1000, 1000);                         
+        FVector scale = FVector(1, 1, 1);                         
         FTransform modelTransform = FTransform(rotation, location, scale);
+        Model->SpawnModel(GetWorld(), modelTransform);
+         modelTransform = FTransform(rotation, FVector(100, 100, 100), scale);
         Model->SpawnModel(GetWorld(), modelTransform);
        // Model->HideModel(); 
     }

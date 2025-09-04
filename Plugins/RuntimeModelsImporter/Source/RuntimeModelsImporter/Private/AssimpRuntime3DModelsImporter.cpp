@@ -17,6 +17,7 @@
 #include "DirectXTex.h"
 #include "Windows/HideWindowsPlatformTypes.h"
 #include "Kismet/GameplayStatics.h"
+#include <KismetProceduralMeshLibrary.h>
 
 UAssimpRuntime3DModelsImporter::UAssimpRuntime3DModelsImporter() {
 }
@@ -43,29 +44,48 @@ void UAssimpRuntime3DModelsImporter::ExtractMesh(aiMesh* Mesh, const aiScene* Sc
     const bool bHasNormals = Mesh->HasNormals();
     const bool bHasUVs = Mesh->HasTextureCoords(0);
 
+    // --- Vertices, Normals, UVs ---
     for (uint32 i = 0; i < Mesh->mNumVertices; ++i)
     {
         OutMesh.Vertices.Add(FVector(Mesh->mVertices[i].x, Mesh->mVertices[i].z, Mesh->mVertices[i].y));
 
         if (bHasNormals)
-        {
             OutMesh.Normals.Add(FVector(Mesh->mNormals[i].x, Mesh->mNormals[i].z, Mesh->mNormals[i].y));
-        }
         else
-        {
-            OutMesh.Normals.Add(FVector::UpVector); // Fallback to upward normal
-        }
+            OutMesh.Normals.Add(FVector::UpVector);
 
         if (bHasUVs)
-        {
             OutMesh.UVs.Add(FVector2D(Mesh->mTextureCoords[0][i].x, Mesh->mTextureCoords[0][i].y));
-        }
         else
-        {
             OutMesh.UVs.Add(FVector2D::ZeroVector);
-        }
     }
 
+    // --- Tangents & Bitangents ---
+    if (!Mesh->HasTangentsAndBitangents())
+    {
+        // Generate tangents using UE's helper
+        TArray<FProcMeshTangent> GeneratedTangents;
+        UKismetProceduralMeshLibrary::CalculateTangentsForMesh(
+            OutMesh.Vertices,
+            OutMesh.Triangles,
+            OutMesh.UVs,
+            OutMesh.Normals,
+            GeneratedTangents
+        );
+
+        // Store them directly in OutMesh.Tangents as FVector (you can convert)
+        OutMesh.Tangents.Empty();
+        for (const FProcMeshTangent& Tangent : GeneratedTangents)
+        {
+            OutMesh.Tangents.Add(Tangent.TangentX); // TangentX is FVector
+        }
+
+        // No need to store bitangents; UE procedural mesh calculates internally
+    }
+
+
+
+    // --- Triangles ---
     for (uint32 i = 0; i < Mesh->mNumFaces; ++i)
     {
         const aiFace& Face = Mesh->mFaces[i];
@@ -77,6 +97,7 @@ void UAssimpRuntime3DModelsImporter::ExtractMesh(aiMesh* Mesh, const aiScene* Sc
         }
     }
 
+    // --- Material assignment ---
     if (Mesh->mMaterialIndex >= 0 && Scene->mMaterials[Mesh->mMaterialIndex])
     {
         OutMesh.Material = CreateMaterialFromAssimp(Scene->mMaterials[Mesh->mMaterialIndex], Scene, FbxFilePath);
@@ -125,7 +146,7 @@ AActor* UAssimpRuntime3DModelsImporter::SpawnModel(UWorld* World, const FTransfo
 
 
     // ✅ Spawn the entire hierarchy starting from the real RootNode
-    SpawnNodeRecursive(World,RootNode, RootActor);
+    SpawnNodeRecursive(World, RootNode, RootActor);
 
     // ✅ Optional debug log
     UE_LOG(LogTemp, Log, TEXT("✅ Spawned model '%s' with %d nodes"), *ModelName, SpawnedNodeActors.Num());
@@ -141,7 +162,7 @@ AActor* UAssimpRuntime3DModelsImporter::SpawnModel(UWorld* World, const FTransfo
     return RootActor;
 }
 
-void UAssimpRuntime3DModelsImporter::SpawnNodeRecursive(UWorld* World,const FModelNodeData& Node, AActor* Parent)
+void UAssimpRuntime3DModelsImporter::SpawnNodeRecursive(UWorld* World, const FModelNodeData& Node, AActor* Parent)
 {
     if (!World || !Parent)
     {
@@ -195,20 +216,34 @@ void UAssimpRuntime3DModelsImporter::SpawnNodeRecursive(UWorld* World,const FMod
         Mesh->AttachToComponent(RootComp, FAttachmentTransformRules::KeepRelativeTransform);
         NodeActor->AddInstanceComponent(Mesh);
 
-        TArray<FProcMeshTangent> Tangents;
-        for (const FVector& Tangent : Section.Tangents)
+        // --- Convert FVector tangents to FProcMeshTangent ---
+        TArray<FProcMeshTangent> ProcTangents;
+        for (const FVector& TangentVec : Section.Tangents)
         {
-            Tangents.Add(FProcMeshTangent(Tangent, false));
+            // true = Flip Y to match UE coordinate system (tangent space)
+            ProcTangents.Add(FProcMeshTangent(TangentVec, true));
         }
 
+        // --- Create mesh section ---
         Mesh->CreateMeshSection_LinearColor(
-            0, Section.Vertices, Section.Triangles, Section.Normals,
-            Section.UVs, {}, Tangents, true
+            0,
+            Section.Vertices,
+            Section.Triangles,
+            Section.Normals,
+            Section.UVs,
+            {},           // Vertex Colors (unused)
+            ProcTangents, // Tangents
+            true          // Enable collision
         );
 
-        Mesh->SetMaterial(0, Section.Material ? Section.Material :
-            LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial")));
+        // --- Assign material ---
+        Mesh->SetMaterial(
+            0,
+            Section.Material ? Section.Material :
+            LoadObject<UMaterialInterface>(nullptr, TEXT("/Engine/BasicShapes/BasicShapeMaterial"))
+        );
     }
+
 
     // Finish spawning to ensure full initialization
     UGameplayStatics::FinishSpawningActor(NodeActor, NodeActor->GetTransform());
@@ -216,7 +251,7 @@ void UAssimpRuntime3DModelsImporter::SpawnNodeRecursive(UWorld* World,const FMod
     // Recursively spawn children
     for (const FModelNodeData& Child : Node.Children)
     {
-        SpawnNodeRecursive(World,Child, NodeActor);
+        SpawnNodeRecursive(World, Child, NodeActor);
     }
 }
 
@@ -254,7 +289,10 @@ void UAssimpRuntime3DModelsImporter::LoadMasterMaterial()
     }
 }
 
-UMaterialInstanceDynamic* UAssimpRuntime3DModelsImporter::CreateMaterialFromAssimp(aiMaterial* AssimpMaterial, const aiScene* Scene, const FString& FbxFilePath)
+UMaterialInstanceDynamic* UAssimpRuntime3DModelsImporter::CreateMaterialFromAssimp(
+    aiMaterial* AssimpMaterial,
+    const aiScene* Scene,
+    const FString& FbxFilePath)
 {
     if (!AssimpMaterial)
     {
@@ -262,20 +300,33 @@ UMaterialInstanceDynamic* UAssimpRuntime3DModelsImporter::CreateMaterialFromAssi
         return nullptr;
     }
 
-    // ✅ Reuse material if already processed
-    if (MaterialCache.Contains(AssimpMaterial))
-        return MaterialCache[AssimpMaterial];
+    // Material name
+    aiString AssimpMatName;
+    if (AssimpMaterial->Get(AI_MATKEY_NAME, AssimpMatName) != AI_SUCCESS)
+        AssimpMatName = aiString("UnnamedMaterial");
+    FString MaterialNameStr = UTF8_TO_TCHAR(AssimpMatName.C_Str());
 
-    // ✅ Load base material
+    // ----------------------------
+    // Cache check first!
+    // ----------------------------
+    if (MaterialCache.Contains(AssimpMaterial))
+    {
+        UE_LOG(LogTemp, Log, TEXT("🔹 Using cached Material Instance: %s"), *MaterialNameStr);
+        return MaterialCache[AssimpMaterial];
+    }
+
+    // Only log creation if new
+    UE_LOG(LogTemp, Log, TEXT("🔹 Creating Material Instance: %s"), *MaterialNameStr);
+
     if (!MasterMaterial)
         LoadMasterMaterial();
     if (!MasterMaterial)
     {
-        UE_LOG(LogTemp, Error, TEXT("❌ No valid master material loaded."));
+        UE_LOG(LogTemp, Error, TEXT("❌ No valid MasterMaterial loaded."));
         return nullptr;
     }
 
-    // ✅ Create dynamic material
+    // Create dynamic instance
     UMaterialInstanceDynamic* MatInstance = UMaterialInstanceDynamic::Create(MasterMaterial, GetTransientPackage());
     if (!MatInstance)
     {
@@ -285,248 +336,222 @@ UMaterialInstanceDynamic* UAssimpRuntime3DModelsImporter::CreateMaterialFromAssi
 
     const FString BaseDir = FPaths::GetPath(FbxFilePath);
 
-    // ✅ Store for reuse
     LoadedMaterials.Add(MatInstance);
     MaterialCache.Add(AssimpMaterial, MatInstance);
 
-    // 🎨 Fallback base color
-    aiColor3D DiffuseColor(1.0f, 1.0f, 1.0f);
+    // ----------------------------
+    // Track applied parameters to avoid duplicates
+    // ----------------------------
+    TSet<FName> AppliedParameters;
+
+    // Fallback BaseColor
+    aiColor3D DiffuseColor(0.f, 0.f, 0.f);
     if (AssimpMaterial->Get(AI_MATKEY_COLOR_DIFFUSE, DiffuseColor) == AI_SUCCESS)
     {
         FLinearColor Color(DiffuseColor.r, DiffuseColor.g, DiffuseColor.b);
         MatInstance->SetVectorParameterValue("BaseColor", Color);
-        UE_LOG(LogTemp, Warning, TEXT("🎨 Diffuse Fallback Color: R=%.2f G=%.2f B=%.2f"), Color.R, Color.G, Color.B);
+        UE_LOG(LogTemp, Log, TEXT("   [%s] 🎨 Fallback Base Color: R=%.2f G=%.2f B=%.2f"),
+            *MaterialNameStr, Color.R, Color.G, Color.B);
     }
 
-    // 📦 Texture mapping function with logging
-    auto TryApplyTexture = [&](aiTextureType Type, const FName& ParamName, const FName& EnableParamName)
+    // ----------------------------
+    // Lambda to apply textures
+    // ----------------------------
+    auto TryApplyTexture = [&](aiTextureType Type, const FName& ParamName, bool bIsColor)
         {
+            if (AppliedParameters.Contains(ParamName))
+                return;
+
             aiString TexPath;
             if (AssimpMaterial->GetTexture(Type, 0, &TexPath) == AI_SUCCESS)
             {
                 FString Path = UTF8_TO_TCHAR(TexPath.C_Str());
                 UTexture2D* Texture = nullptr;
+                FString AppliedTextureName = "None";
 
-                // Handle embedded texture
-                if (Path.StartsWith(TEXT("*")))
+                const aiTexture* Embedded = Scene->GetEmbeddedTexture(TexPath.C_Str());
+                if (Embedded)
                 {
-                    const aiTexture* Embedded = Scene->GetEmbeddedTexture(TexPath.C_Str());
-                    Texture = CreateTextureFromEmbedded(Embedded, Path, Type);
-                    UE_LOG(LogTemp, Log, TEXT("📦 Using embedded texture for %s: %s"), *ParamName.ToString(), *Path);
+                    Texture = CreateTextureFromEmbedded(Embedded, Path, Type, MaterialNameStr, ParamName);
+                    AppliedTextureName = FString::Printf(TEXT("Embedded (%s)"), *Path);
                 }
                 else
                 {
-                    // Handle external texture
                     FString FileNameOnly = FPaths::GetCleanFilename(Path);
-                    FString FoundTexturePath;
-
-                    IFileManager& FileManager = IFileManager::Get();
                     TArray<FString> FoundFiles;
-                    FileManager.FindFilesRecursive(FoundFiles, *BaseDir, *FileNameOnly, true, false);
+                    IFileManager::Get().FindFilesRecursive(FoundFiles, *BaseDir, *FileNameOnly, true, false);
 
-                    if (FoundFiles.Num() > 0)
-                    {
-                        FoundTexturePath = FoundFiles[0];
-                    }
-                    else
-                    {
-                        FoundTexturePath = FPaths::Combine(BaseDir, Path);
-                        FPaths::NormalizeFilename(FoundTexturePath);
-                    }
+                    FString FoundTexturePath = (FoundFiles.Num() > 0) ? FoundFiles[0] : FPaths::Combine(BaseDir, Path);
+                    FPaths::NormalizeFilename(FoundTexturePath);
 
-                    if (!FoundTexturePath.IsEmpty() && FPaths::FileExists(FoundTexturePath))
-                    {
-                        Texture = LoadTextureFromDisk(FoundTexturePath);
-                        UE_LOG(LogTemp, Log, TEXT("🖼️ Found external texture for %s: %s"), *ParamName.ToString(), *FoundTexturePath);
-                    }
-                    else
-                    {
-                        UE_LOG(LogTemp, Warning, TEXT("❌ Texture file not found for %s → %s"), *ParamName.ToString(), *Path);
-                    }
+                    if (FPaths::FileExists(FoundTexturePath))
+                        Texture = LoadTextureFromDisk(FoundTexturePath, MaterialNameStr, ParamName, Type); // Pass Type here!
                 }
 
                 if (Texture)
                 {
+                    Texture->SRGB = bIsColor;
                     MatInstance->SetTextureParameterValue(ParamName, Texture);
-                    if (!EnableParamName.IsNone())
-                        MatInstance->SetScalarParameterValue(EnableParamName, 1.0f);
-                    UE_LOG(LogTemp, Display, TEXT("✅ Texture applied to %s | Enable: %s = 1"), *ParamName.ToString(), *EnableParamName.ToString());
+                    AppliedParameters.Add(ParamName);
+                    UE_LOG(LogTemp, Display, TEXT("   [%s] ✅ Texture applied: %s -> Parameter: %s"),
+                        *MaterialNameStr, *AppliedTextureName, *ParamName.ToString());
                 }
-            }
-            else
-            {
-                UE_LOG(LogTemp, Log, TEXT("⚠️ No texture assigned for %s (aiTextureType %d)"), *ParamName.ToString(), (int32)Type);
+                else
+                {
+                    UE_LOG(LogTemp, Warning, TEXT("   [%s] ⚠️ Texture not found for Parameter: %s"),
+                        *MaterialNameStr, *ParamName.ToString());
+                }
             }
         };
 
-    // 🔍 Texture channels with logging
-    TryApplyTexture(aiTextureType_DIFFUSE, "BaseColorTex", "UseBaseColorTex");
-    TryApplyTexture(aiTextureType_BASE_COLOR, "BaseColorTex", "UseBaseColorTex");
-    TryApplyTexture(aiTextureType_NORMALS, "NormalMap", "UseNormalMap");
-    TryApplyTexture(aiTextureType_HEIGHT, "NormalMap", "UseNormalMap");
-    TryApplyTexture(aiTextureType_SPECULAR, "SpecularMap", "UseSpecularMap");
-    TryApplyTexture(aiTextureType_METALNESS, "MetallicMap", "UseMetallicMap");
-    TryApplyTexture(aiTextureType_AMBIENT_OCCLUSION, "AOMap", "UseAOMap");
-    TryApplyTexture(aiTextureType_EMISSIVE, "EmissiveMap", "UseEmissiveMap");
-    TryApplyTexture(aiTextureType_DIFFUSE_ROUGHNESS, "RoughnessMap", "UseRoughnessMap");
-    TryApplyTexture(aiTextureType_OPACITY, "OpacityMap", "UseOpacityMap");
+    // ----------------------------
+    // Apply all 6 parameters
+    // ----------------------------
+    TryApplyTexture(aiTextureType_DIFFUSE, "BaseColor", true);
+    TryApplyTexture(aiTextureType_BASE_COLOR, "BaseColor", true);
 
-    // ⚙️ Scalar fallback logging for all items in material except BaseTex and Normal Text   
-    float Metallic = 0.0f;
-    if (AssimpMaterial->Get(AI_MATKEY_METALLIC_FACTOR, Metallic) == AI_SUCCESS)
-    {
-        MatInstance->SetScalarParameterValue("Metallic", Metallic);
-        UE_LOG(LogTemp, Log, TEXT("⚙️ Metallic fallback scalar used: %.2f"), Metallic);
-    }
+    TryApplyTexture(aiTextureType_NORMALS, "Normal", false);
+    TryApplyTexture(aiTextureType_NORMAL_CAMERA, "Normal", false);
+    TryApplyTexture(aiTextureType_HEIGHT, "Normal", false);
+    TryApplyTexture(aiTextureType_DISPLACEMENT, "Normal", false);
 
-    aiColor3D SpecularColor;
-    if (AssimpMaterial->Get(AI_MATKEY_COLOR_SPECULAR, SpecularColor) == AI_SUCCESS)
-    {
-        FLinearColor SpecColor(SpecularColor.r, SpecularColor.g, SpecularColor.b);
-        MatInstance->SetVectorParameterValue("SpecularColor", SpecColor);
-        UE_LOG(LogTemp, Log, TEXT("🎯 Specular Color fallback: R=%.2f G=%.2f B=%.2f"), SpecColor.R, SpecColor.G, SpecColor.B);
-    }
+    TryApplyTexture(aiTextureType_METALNESS, "Metallic", false);
+    // TryApplyTexture(aiTextureType_SPECULAR, "Metallic", false); // Sometimes specular is used for metal
 
-    float Roughness = 0.5f;
-    if (AssimpMaterial->Get(AI_MATKEY_ROUGHNESS_FACTOR, Roughness) == AI_SUCCESS)
-    {
-        MatInstance->SetScalarParameterValue("Roughness", Roughness);
-        UE_LOG(LogTemp, Log, TEXT("⚙️ Roughness fallback scalar used: %.2f"), Roughness);
-    }
 
-    aiColor3D EmissiveColor;
-    if (AssimpMaterial->Get(AI_MATKEY_COLOR_EMISSIVE, EmissiveColor) == AI_SUCCESS)
-    {
-        FLinearColor Emissive(EmissiveColor.r, EmissiveColor.g, EmissiveColor.b);
-        MatInstance->SetVectorParameterValue("EmissiveColor", Emissive);
-        UE_LOG(LogTemp, Log, TEXT("🌟 Emissive fallback: R=%.2f G=%.2f B=%.2f"), Emissive.R, Emissive.G, Emissive.B);
-    }
+    TryApplyTexture(aiTextureType_SPECULAR, "Specular", false);
 
-    float Opacity = 1.0f;
-    if (AssimpMaterial->Get(AI_MATKEY_OPACITY, Opacity) == AI_SUCCESS)
-    {
-        MatInstance->SetScalarParameterValue("Opacity", Opacity);
-        UE_LOG(LogTemp, Log, TEXT("🔍 Opacity fallback scalar: %.2f"), Opacity);
-    }
 
-    float AO = 1.0f;
-    if (AssimpMaterial->Get(AI_MATKEY_OPACITY, AO) == AI_SUCCESS)
-    {
-        MatInstance->SetScalarParameterValue("AO", AO);
-        UE_LOG(LogTemp, Log, TEXT("🔍 AO fallback scalar: %.2f"), AO);
-    }
+    TryApplyTexture(aiTextureType_AMBIENT_OCCLUSION, "AmbientOcclusion", false);
+    TryApplyTexture(aiTextureType_AMBIENT, "AmbientOcclusion", false);
+
+    TryApplyTexture(aiTextureType_DIFFUSE_ROUGHNESS, "Roughness", false);
+    // TryApplyTexture(aiTextureType_SHININESS, "Roughness", false); // Shininess often contains roughness
+
+
+    TryApplyTexture(aiTextureType_EMISSION_COLOR, "Emmisive", false);
+    TryApplyTexture(aiTextureType_EMISSIVE, "Emmisive", false);
+
+
+    TryApplyTexture(aiTextureType_OPACITY, "Opacity", false);
+
+    UE_LOG(LogTemp, Log, TEXT("🔹 Finished Material Instance: %s"), *MaterialNameStr);
 
     return MatInstance;
 }
 
-UTexture2D* UAssimpRuntime3DModelsImporter::CreateTextureFromEmbedded(const aiTexture* EmbeddedTex, const FString& DebugName, aiTextureType Type)
 
+UTexture2D* UAssimpRuntime3DModelsImporter::CreateTextureFromEmbedded(
+    const aiTexture* EmbeddedTex,
+    const FString& DebugName,
+    aiTextureType Type,
+    const FString& MaterialName,
+    const FName& ParamName)
 {
-    if (!EmbeddedTex)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("Embedded texture is null: %s"), *DebugName);
-        return nullptr;
-    }
+    if (!EmbeddedTex) return nullptr;
 
-    if (EmbeddedTex->mHeight == 0) // Compressed texture (PNG, JPG, etc.)
+    UTexture2D* Texture = nullptr;
+
+    // --- Compressed texture (PNG/JPG) ---
+    if (EmbeddedTex->mHeight == 0)
     {
         const uint8* CompressedData = reinterpret_cast<const uint8*>(EmbeddedTex->pcData);
         int32 DataSize = EmbeddedTex->mWidth;
 
-        if (!CompressedData || DataSize <= 0)
-        {
-            UE_LOG(LogTemp, Error, TEXT("❌ Invalid compressed embedded texture data: %s"), *DebugName);
-            return nullptr;
-        }
-
         IImageWrapperModule& ImageWrapperModule = FModuleManager::LoadModuleChecked<IImageWrapperModule>("ImageWrapper");
         EImageFormat Format = ImageWrapperModule.DetectImageFormat(CompressedData, DataSize);
+        TSharedPtr<IImageWrapper> Wrapper = ImageWrapperModule.CreateImageWrapper(Format);
 
-        if (Format == EImageFormat::Invalid)
-        {
-            UE_LOG(LogTemp, Error, TEXT("❌ Invalid image format in embedded texture: %s"), *DebugName);
-            return nullptr;
-        }
+        if (!Wrapper.IsValid() || !Wrapper->SetCompressed(CompressedData, DataSize)) return nullptr;
 
-        TSharedPtr<IImageWrapper> ImageWrapper = ImageWrapperModule.CreateImageWrapper(Format);
+        TArray64<uint8> RawData;
+        if (!Wrapper->GetRaw(ERGBFormat::BGRA, 8, RawData)) return nullptr;
 
-        if (ImageWrapper.IsValid() && ImageWrapper->SetCompressed(CompressedData, DataSize))
-        {
-            TArray64<uint8> RawData;
-            if (ImageWrapper->GetRaw(ERGBFormat::BGRA, 8, RawData))
-            {
-                int32 Width = ImageWrapper->GetWidth();
-                int32 Height = ImageWrapper->GetHeight();
+        int32 Width = Wrapper->GetWidth();
+        int32 Height = Wrapper->GetHeight();
 
-                if (Width <= 0 || Height <= 0 || RawData.Num() != Width * Height * 4)
-                {
-                    UE_LOG(LogTemp, Error, TEXT("❌ Invalid image data size for embedded texture: %s"), *DebugName);
-                    return nullptr;
-                }
-
-                UTexture2D* Texture = UTexture2D::CreateTransient(Width, Height, PF_B8G8R8A8);
-                if (!Texture)
-                {
-                    UE_LOG(LogTemp, Error, TEXT("❌ Failed to create texture object: %s"), *DebugName);
-                    return nullptr;
-                }
-
+        Texture = UTexture2D::CreateTransient(Width, Height, PF_B8G8R8A8);
+        if (!Texture) return nullptr;
 #if WITH_EDITORONLY_DATA
-                Texture->MipGenSettings = TMGS_NoMipmaps;
+        Texture->MipGenSettings = TMGS_FromTextureGroup;
 #endif
-                Texture->NeverStream = true;
-                Texture->LODGroup = TEXTUREGROUP_UI;
-                if (Type == aiTextureType_DIFFUSE || Type == aiTextureType_BASE_COLOR)
-                {
-                    Texture->SRGB = true;  // Color data
-                }
-                else
-                {
-                    Texture->SRGB = false; // Linear data
-                }
+        Texture->NeverStream = true;
 
-
-                // Safe locking and copying
-                FTexture2DMipMap& Mip = Texture->GetPlatformData()->Mips[0];
-                void* TextureData = Mip.BulkData.Lock(LOCK_READ_WRITE);
-                FMemory::Memcpy(TextureData, RawData.GetData(), RawData.Num());
-                Mip.BulkData.Unlock();
-
-                Texture->UpdateResource();
-
-                // Don’t rename before UpdateResource
-                Texture->SetFlags(RF_Transient);
-                Texture->AddToRoot(); // Optional: Prevent GC
-                UE_LOG(LogTemp, Display, TEXT("✅ Embedded texture created: %s (%dx%d)"), *DebugName, Width, Height);
-                return Texture;
-            }
-            else
-            {
-                UE_LOG(LogTemp, Error, TEXT("❌ Failed to decode raw data for: %s"), *DebugName);
-            }
+        // --- SRGB / TextureGroup ---
+        if (Type == aiTextureType_DIFFUSE || Type == aiTextureType_BASE_COLOR || Type == aiTextureType_EMISSIVE)
+        {
+            Texture->SRGB = true;
+            Texture->LODGroup = TEXTUREGROUP_World;
         }
-
+        else if (Type == aiTextureType_NORMALS || Type == aiTextureType_HEIGHT)
+        {
+            Texture->SRGB = false;
+            Texture->LODGroup = TEXTUREGROUP_WorldNormalMap;
+        }
+        else if (Type == aiTextureType_METALNESS || Type == aiTextureType_DIFFUSE_ROUGHNESS)
+        {
+            Texture->SRGB = false;
+            Texture->LODGroup = TEXTUREGROUP_WorldSpecular;
+        }
+        else if (Type == aiTextureType_AMBIENT_OCCLUSION || Type == aiTextureType_SPECULAR)
+        {
+            Texture->SRGB = false;
+            Texture->LODGroup = TEXTUREGROUP_World;
+        }
         else
         {
-            UE_LOG(LogTemp, Error, TEXT("❌ Failed to parse compressed embedded texture: %s"), *DebugName);
+            Texture->SRGB = false;
+            Texture->LODGroup = TEXTUREGROUP_World;
         }
+
+        // --- Copy raw data ---
+        FTexture2DMipMap& Mip = Texture->GetPlatformData()->Mips[0];
+        void* TextureData = Mip.BulkData.Lock(LOCK_READ_WRITE);
+        FMemory::Memcpy(TextureData, RawData.GetData(), RawData.Num());
+        Mip.BulkData.Unlock();
+
+        Texture->UpdateResource();
+        Texture->SetFlags(RF_Transient);
+
+        UE_LOG(LogTemp, Display, TEXT("[%s] ✅ Loaded embedded texture for parameter %s: %s (%dx%d)"),
+            *MaterialName, *ParamName.ToString(), *DebugName, Width, Height);
     }
-    else // Uncompressed raw RGBA texture (rare)
+    else // --- Raw RGBA texture ---
     {
         int32 Width = EmbeddedTex->mWidth;
         int32 Height = EmbeddedTex->mHeight;
 
-        if (Width <= 0 || Height <= 0)
-        {
-            UE_LOG(LogTemp, Error, TEXT("❌ Invalid raw texture dimensions for %s: %dx%d"), *DebugName, Width, Height);
-            return nullptr;
-        }
+        Texture = UTexture2D::CreateTransient(Width, Height, PF_B8G8R8A8);
+#if WITH_EDITORONLY_DATA
+        Texture->MipGenSettings = TMGS_FromTextureGroup;
+#endif
+        Texture->NeverStream = true;
 
-        UTexture2D* Texture = UTexture2D::CreateTransient(Width, Height);
-        if (!Texture)
+        // SRGB / TextureGroup
+        if (Type == aiTextureType_DIFFUSE || Type == aiTextureType_BASE_COLOR || Type == aiTextureType_EMISSIVE)
         {
-            UE_LOG(LogTemp, Error, TEXT("❌ Failed to create raw texture object: %s"), *DebugName);
-            return nullptr;
+            Texture->SRGB = true;
+            Texture->LODGroup = TEXTUREGROUP_World;
+        }
+        else if (Type == aiTextureType_NORMALS || Type == aiTextureType_HEIGHT)
+        {
+            Texture->SRGB = false;
+            Texture->LODGroup = TEXTUREGROUP_WorldNormalMap;
+        }
+        else if (Type == aiTextureType_METALNESS || Type == aiTextureType_DIFFUSE_ROUGHNESS)
+        {
+            Texture->SRGB = false;
+            Texture->LODGroup = TEXTUREGROUP_WorldSpecular;
+        }
+        else if (Type == aiTextureType_AMBIENT_OCCLUSION || Type == aiTextureType_SPECULAR)
+        {
+            Texture->SRGB = false;
+            Texture->LODGroup = TEXTUREGROUP_World;
+        }
+        else
+        {
+            Texture->SRGB = false;
+            Texture->LODGroup = TEXTUREGROUP_World;
         }
 
         void* TextureData = Texture->GetPlatformData()->Mips[0].BulkData.Lock(LOCK_READ_WRITE);
@@ -535,83 +560,79 @@ UTexture2D* UAssimpRuntime3DModelsImporter::CreateTextureFromEmbedded(const aiTe
 
         Texture->UpdateResource();
         Texture->SetFlags(RF_Transient);
-        Texture->Rename(*DebugName);
 
-        return Texture;
+        UE_LOG(LogTemp, Display, TEXT("[%s] ✅ Loaded raw embedded texture for parameter %s: %s (%dx%d)"),
+            *MaterialName, *ParamName.ToString(), *DebugName, Width, Height);
     }
 
-    UE_LOG(LogTemp, Warning, TEXT("⚠️ Unknown format or failed to create embedded texture: %s"), *DebugName);
-    return nullptr;
+    return Texture;
 }
 
-UTexture2D* UAssimpRuntime3DModelsImporter::LoadTextureFromDisk(const FString& TexturePath)
+
+
+UTexture2D* UAssimpRuntime3DModelsImporter::LoadTextureFromDisk(
+    const FString& TexturePath,
+    const FString& MaterialName,
+    const FName& ParamName,
+    aiTextureType Type)
 {
-    if (!FPaths::FileExists(TexturePath))
-    {
-        UE_LOG(LogTemp, Warning, TEXT("❌ File does not exist: %s"), *TexturePath);
-        return nullptr;
-    }
+    if (!FPaths::FileExists(TexturePath)) return nullptr;
 
     FString Extension = FPaths::GetExtension(TexturePath).ToLower();
 
     if (Extension == "dds")
     {
-        return LoadDDSTexture(TexturePath); // ✅ Custom DDS logic
+        return LoadDDSTexture(TexturePath, Type); // Keep existing DDS loader
     }
 
-    // Supported by Unreal via ImageWrapper: png, jpg, bmp, tga (not DDS or EXR)
     TArray<uint8> FileData;
-    if (!FFileHelper::LoadFileToArray(FileData, *TexturePath))
-    {
-        UE_LOG(LogTemp, Warning, TEXT("❌ Failed to load texture file: %s"), *TexturePath);
-        return nullptr;
-    }
+    if (!FFileHelper::LoadFileToArray(FileData, *TexturePath)) return nullptr;
 
-    // Detect format
     IImageWrapperModule& ImageWrapperModule = FModuleManager::LoadModuleChecked<IImageWrapperModule>("ImageWrapper");
     EImageFormat Format = ImageWrapperModule.DetectImageFormat(FileData.GetData(), FileData.Num());
-
-    if (Format == EImageFormat::Invalid)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("❌ Unsupported image format: %s"), *TexturePath);
-        return nullptr;
-    }
+    if (Format == EImageFormat::Invalid) return nullptr;
 
     TSharedPtr<IImageWrapper> Wrapper = ImageWrapperModule.CreateImageWrapper(Format);
-
-    if (!Wrapper.IsValid() || !Wrapper->SetCompressed(FileData.GetData(), FileData.Num()))
-    {
-        UE_LOG(LogTemp, Warning, TEXT("❌ Failed to decode image data: %s"), *TexturePath);
-        return nullptr;
-    }
+    if (!Wrapper.IsValid() || !Wrapper->SetCompressed(FileData.GetData(), FileData.Num())) return nullptr;
 
     TArray64<uint8> RawData;
-    if (!Wrapper->GetRaw(ERGBFormat::BGRA, 8, RawData))
-    {
-        UE_LOG(LogTemp, Warning, TEXT("❌ Failed to extract raw BGRA pixels: %s"), *TexturePath);
-        return nullptr;
-    }
+    if (!Wrapper->GetRaw(ERGBFormat::BGRA, 8, RawData)) return nullptr;
 
-    const int32 Width = Wrapper->GetWidth();
-    const int32 Height = Wrapper->GetHeight();
-    if (Width <= 0 || Height <= 0)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("❌ Invalid image dimensions: %s"), *TexturePath);
-        return nullptr;
-    }
+    int32 Width = Wrapper->GetWidth();
+    int32 Height = Wrapper->GetHeight();
 
     UTexture2D* Texture = UTexture2D::CreateTransient(Width, Height, PF_B8G8R8A8);
-    if (!Texture)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("❌ Failed to create transient texture: %s"), *TexturePath);
-        return nullptr;
-    }
-
 #if WITH_EDITORONLY_DATA
-    Texture->MipGenSettings = TMGS_NoMipmaps; // Optional: allow mip generation from disk if needed
+    Texture->MipGenSettings = TMGS_FromTextureGroup;
 #endif
     Texture->NeverStream = true;
-    Texture->SRGB = true; // Most likely sRGB for color maps
+
+    // SRGB / TextureGroup
+    if (Type == aiTextureType_DIFFUSE || Type == aiTextureType_BASE_COLOR || Type == aiTextureType_EMISSIVE)
+    {
+        Texture->SRGB = true;
+        Texture->LODGroup = TEXTUREGROUP_World;
+    }
+    else if (Type == aiTextureType_NORMALS || Type == aiTextureType_HEIGHT)
+    {
+        Texture->SRGB = false;
+        Texture->LODGroup = TEXTUREGROUP_WorldNormalMap;
+    }
+    else if (Type == aiTextureType_METALNESS || Type == aiTextureType_DIFFUSE_ROUGHNESS)
+    {
+        Texture->SRGB = false;
+        Texture->LODGroup = TEXTUREGROUP_WorldSpecular;
+    }
+    else if (Type == aiTextureType_AMBIENT_OCCLUSION || Type == aiTextureType_SPECULAR)
+    {
+        Texture->SRGB = false;
+        Texture->LODGroup = TEXTUREGROUP_World;
+    }
+    else
+    {
+        Texture->SRGB = false;
+        Texture->LODGroup = TEXTUREGROUP_World;
+    }
 
     FTexture2DMipMap& Mip = Texture->GetPlatformData()->Mips[0];
     void* TextureData = Mip.BulkData.Lock(LOCK_READ_WRITE);
@@ -621,11 +642,17 @@ UTexture2D* UAssimpRuntime3DModelsImporter::LoadTextureFromDisk(const FString& T
     Texture->UpdateResource();
     Texture->SetFlags(RF_Transient);
 
-    UE_LOG(LogTemp, Display, TEXT("✅ Loaded texture: %s (%dx%d)"), *TexturePath, Width, Height);
+    UE_LOG(LogTemp, Display, TEXT("[%s] ✅ Loaded texture for parameter %s: %s (%dx%d)"),
+        *MaterialName, *ParamName.ToString(), *TexturePath, Width, Height);
+
     return Texture;
 }
 
-UTexture2D* UAssimpRuntime3DModelsImporter::LoadDDSTexture(const FString& DDSTexture)
+
+UTexture2D* UAssimpRuntime3DModelsImporter::LoadDDSTexture(
+    const FString& DDSTexture,
+    aiTextureType Type // New: pass texture type to handle SRGB correctly
+)
 {
     if (!FPaths::FileExists(DDSTexture))
     {
@@ -633,6 +660,7 @@ UTexture2D* UAssimpRuntime3DModelsImporter::LoadDDSTexture(const FString& DDSTex
         return nullptr;
     }
 
+    // Load DDS using DirectXTex
     DirectX::ScratchImage ScratchImage;
     std::wstring WPath = *DDSTexture;
     HRESULT Hr = DirectX::LoadFromDDSFile(WPath.c_str(), DirectX::DDS_FLAGS_NONE, nullptr, ScratchImage);
@@ -674,6 +702,7 @@ UTexture2D* UAssimpRuntime3DModelsImporter::LoadDDSTexture(const FString& DDSTex
     const uint32 Height = static_cast<uint32>(FinalMeta.height);
     const uint32 MipLevels = static_cast<uint32>(FinalMeta.mipLevels);
 
+    // Create Unreal texture
     UTexture2D* Texture = UTexture2D::CreateTransient(Width, Height, PF_B8G8R8A8);
     if (!Texture)
     {
@@ -687,12 +716,13 @@ UTexture2D* UAssimpRuntime3DModelsImporter::LoadDDSTexture(const FString& DDSTex
     PlatformData->SizeY = Height;
     PlatformData->PixelFormat = PF_B8G8R8A8;
 
+    // Copy all mip levels
     for (uint32 MipIndex = 0; MipIndex < MipLevels; ++MipIndex)
     {
         const DirectX::Image* MipImage = FinalImage.GetImage(MipIndex, 0, 0);
         if (!MipImage || !MipImage->pixels)
         {
-            UE_LOG(LogTemp, Warning, TEXT("⚠️ Skipping invalid mip level %u"), MipIndex);
+            UE_LOG(LogTemp, Warning, TEXT("⚠️ Skipping invalid mip level %u for texture %s"), MipIndex, *DDSTexture);
             continue;
         }
 
@@ -708,19 +738,46 @@ UTexture2D* UAssimpRuntime3DModelsImporter::LoadDDSTexture(const FString& DDSTex
         PlatformData->Mips.Add(Mip);
     }
 
-    Texture->NeverStream = true;
-    Texture->SRGB = false;
+    // --- Set SRGB / TextureGroup based on type ---
+    if (Type == aiTextureType_DIFFUSE || Type == aiTextureType_BASE_COLOR || Type == aiTextureType_EMISSIVE)
+    {
+        Texture->SRGB = true;
+        Texture->LODGroup = TEXTUREGROUP_World;
+    }
+    else if (Type == aiTextureType_NORMALS || Type == aiTextureType_HEIGHT)
+    {
+        Texture->SRGB = false;
+        Texture->LODGroup = TEXTUREGROUP_WorldNormalMap;
+    }
+    else if (Type == aiTextureType_METALNESS || Type == aiTextureType_DIFFUSE_ROUGHNESS)
+    {
+        Texture->SRGB = false;
+        Texture->LODGroup = TEXTUREGROUP_WorldSpecular;
+    }
+    else if (Type == aiTextureType_AMBIENT_OCCLUSION || Type == aiTextureType_SPECULAR)
+    {
+        Texture->SRGB = false;
+        Texture->LODGroup = TEXTUREGROUP_World;
+    }
+    else
+    {
+        Texture->SRGB = false;
+        Texture->LODGroup = TEXTUREGROUP_World;
+    }
 
 #if WITH_EDITORONLY_DATA
     Texture->MipGenSettings = TMGS_NoMipmaps; // Already using loaded mips
 #endif
+    Texture->NeverStream = true;
 
     Texture->UpdateResource();
-    Texture->AddToRoot();
+    Texture->AddToRoot(); // prevent GC
 
-    UE_LOG(LogTemp, Display, TEXT("✅ DDS loaded with mipmaps: %s (%ux%u Mips=%u)"), *DDSTexture, Width, Height, MipLevels);
+    UE_LOG(LogTemp, Display, TEXT("✅ DDS loaded: %s (%dx%d, Mips=%d, Type=%d)"), *DDSTexture, Width, Height, MipLevels, (int32)Type);
+
     return Texture;
 }
+
 
 bool UAssimpRuntime3DModelsImporter::IsVectorFinite(const FVector& Vec)
 {
@@ -788,7 +845,7 @@ void UAssimpRuntime3DModelsImporter::ImportModel(const FString& InFilePath)
         UE_LOG(LogTemp, Error, TEXT("❌ Failed to load FBX: %s"), *FilePath);
         return;
     }
-
+    DebugAllTexturesInScene(Scene, FilePath);
     RootNode = FModelNodeData();
     ParseNode(Scene->mRootNode, Scene, RootNode, FilePath);
 }
@@ -829,5 +886,194 @@ void UAssimpRuntime3DModelsImporter::ApplyTransform(const FTransform& modelTrans
     if (RootFBXActor)
     {
         RootFBXActor->SetActorTransform(modelTransform);
+    }
+}
+
+
+
+void UAssimpRuntime3DModelsImporter::DebugAllTexturesInScene(const aiScene* Scene, const FString& InFilePath)
+{
+    if (!Scene)
+    {
+        UE_LOG(LogTemp, Error, TEXT("❌ No scene to debug textures"));
+        return;
+    }
+
+    UE_LOG(LogTemp, Warning, TEXT("🔍 DEBUGGING ALL TEXTURES IN FBX FILE: %s"), *InFilePath);
+    UE_LOG(LogTemp, Warning, TEXT("======================================================"));
+
+    // 1. Count total textures in scene
+    int32 TotalTextures = Scene->mNumTextures;
+    UE_LOG(LogTemp, Warning, TEXT("📊 Total Textures in Scene: %d"), TotalTextures);
+
+    // 2. List all embedded textures
+    UE_LOG(LogTemp, Warning, TEXT("📦 EMBEDDED TEXTURES:"));
+    for (unsigned int i = 0; i < Scene->mNumTextures; ++i)
+    {
+        const aiTexture* Texture = Scene->mTextures[i];
+        if (!Texture) continue;
+
+        FString TextureName = UTF8_TO_TCHAR(Texture->mFilename.C_Str());
+        if (TextureName.IsEmpty())
+        {
+            TextureName = FString::Printf(TEXT("Embedded_Texture_%d"), i);
+        }
+
+        FString Format = (Texture->mHeight == 0) ?
+            FString::Printf(TEXT("Compressed, %d bytes"), Texture->mWidth) :
+            FString::Printf(TEXT("Raw RGBA, %dx%d pixels"), Texture->mWidth, Texture->mHeight);
+
+        UE_LOG(LogTemp, Warning, TEXT("   [%d] %s - %s"), i, *TextureName, *Format);
+
+        // Additional info for compressed textures
+        if (Texture->mHeight == 0)
+        {
+            // Try to detect format
+            const uint8* Data = reinterpret_cast<const uint8*>(Texture->pcData);
+            if (Data[0] == 0x89 && Data[1] == 'P' && Data[2] == 'N' && Data[3] == 'G')
+            {
+
+                UE_LOG(LogTemp, Warning, TEXT("       Format: PNG"));
+            }
+            else if (Data[0] == 0xFF && Data[1] == 0xD8 && Data[2] == 0xFF)
+            {
+
+                UE_LOG(LogTemp, Warning, TEXT("       Format: JPEG"));
+            }
+            else if (Data[0] == 'D' && Data[1] == 'D' && Data[2] == 'S' && Data[3] == ' ')
+            {
+
+                UE_LOG(LogTemp, Warning, TEXT("       Format: DDS"));
+            }
+            else
+            {
+
+                UE_LOG(LogTemp, Warning, TEXT("       Format: Unknown"));
+            }
+        }
+    }
+
+    // 3. List all materials and their texture references
+    UE_LOG(LogTemp, Warning, TEXT("🎨 MATERIAL TEXTURE REFERENCES:"));
+    for (unsigned int i = 0; i < Scene->mNumMaterials; ++i)
+    {
+        aiMaterial* Material = Scene->mMaterials[i];
+        if (!Material) continue;
+
+        aiString MatName;
+        Material->Get(AI_MATKEY_NAME, MatName);
+        FString MaterialName = UTF8_TO_TCHAR(MatName.C_Str());
+        if (MaterialName.IsEmpty()) MaterialName = FString::Printf(TEXT("Unnamed_Material_%d"), i);
+
+        UE_LOG(LogTemp, Warning, TEXT("   Material %d: %s"), i, *MaterialName);
+
+        // Check all texture types
+        for (int32 TextureType = aiTextureType_NONE; TextureType < aiTextureType_UNKNOWN; ++TextureType)
+        {
+            aiTextureType Type = static_cast<aiTextureType>(TextureType);
+            unsigned int TextureCount = Material->GetTextureCount(Type);
+
+            if (TextureCount > 0)
+            {
+                FString TypeName = GetTextureTypeName(Type);
+                UE_LOG(LogTemp, Warning, TEXT("      %s: %d texture(s)"), *TypeName, TextureCount);
+
+                for (unsigned int j = 0; j < TextureCount; ++j)
+                {
+                    aiString TexturePath;
+                    aiTextureMapping Mapping;
+                    unsigned int UVIndex;
+                    float BlendFactor;
+                    aiTextureOp Operation;
+                    aiTextureMapMode MapMode;
+
+                    if (Material->GetTexture(Type, j, &TexturePath, &Mapping, &UVIndex, &BlendFactor, &Operation, &MapMode) == AI_SUCCESS)
+                    {
+                        FString Path = UTF8_TO_TCHAR(TexturePath.C_Str());
+                        UE_LOG(LogTemp, Warning, TEXT("         [%d] %s"), j, *Path);
+                        UE_LOG(LogTemp, Warning, TEXT("            Mapping: %d, UV Index: %d, Blend: %.2f"),
+                            Mapping, UVIndex, BlendFactor);
+                    }
+                }
+            }
+        }
+    }
+
+    // 4. Check for external texture files that might be referenced
+    UE_LOG(LogTemp, Warning, TEXT("📁 POTENTIAL EXTERNAL TEXTURE REFERENCES:"));
+    TSet<FString> UniqueExternalTextures;
+
+    // Get base directory of FBX file
+    FString BaseDir = FPaths::GetPath(InFilePath);
+
+    // Look through all materials for external texture references
+    for (unsigned int i = 0; i < Scene->mNumMaterials; ++i)
+    {
+        aiMaterial* Material = Scene->mMaterials[i];
+        if (!Material) continue;
+
+        for (int32 TextureType = aiTextureType_NONE; TextureType < aiTextureType_UNKNOWN; ++TextureType)
+        {
+            aiTextureType Type = static_cast<aiTextureType>(TextureType);
+            unsigned int TextureCount = Material->GetTextureCount(Type);
+
+            for (unsigned int j = 0; j < TextureCount; ++j)
+            {
+                aiString TexturePath;
+                if (Material->GetTexture(Type, j, &TexturePath) == AI_SUCCESS)
+                {
+                    FString Path = UTF8_TO_TCHAR(TexturePath.C_Str());
+
+                    // Check if this is likely an external file (not embedded)
+                    if (!Path.IsEmpty() && !Path.StartsWith("*"))
+                    {
+                        UniqueExternalTextures.Add(Path);
+                    }
+                }
+            }
+        }
+    }
+
+    // List unique external texture references
+    for (const FString& TexturePath : UniqueExternalTextures)
+    {
+        FString FullPath = FPaths::Combine(BaseDir, TexturePath);
+        bool bExists = FPaths::FileExists(FullPath);
+
+        UE_LOG(LogTemp, Warning, TEXT("   %s -> %s"),
+            *TexturePath,
+            bExists ? TEXT("✅ EXISTS") : TEXT("❌ MISSING"));
+    }
+
+    UE_LOG(LogTemp, Warning, TEXT("======================================================"));
+    UE_LOG(LogTemp, Warning, TEXT("📋 SUMMARY:"));
+    UE_LOG(LogTemp, Warning, TEXT("   Embedded Textures: %d"), Scene->mNumTextures);
+    UE_LOG(LogTemp, Warning, TEXT("   External References: %d"), UniqueExternalTextures.Num());
+    UE_LOG(LogTemp, Warning, TEXT("   Total Materials: %d"), Scene->mNumMaterials);
+}
+
+FString UAssimpRuntime3DModelsImporter::GetTextureTypeName(aiTextureType Type)
+{
+    switch (Type)
+    {
+    case aiTextureType_NONE: return TEXT("NONE");
+    case aiTextureType_DIFFUSE: return TEXT("DIFFUSE");
+    case aiTextureType_SPECULAR: return TEXT("SPECULAR");
+    case aiTextureType_AMBIENT: return TEXT("AMBIENT");
+    case aiTextureType_EMISSIVE: return TEXT("EMISSIVE");
+    case aiTextureType_HEIGHT: return TEXT("HEIGHT");
+    case aiTextureType_NORMALS: return TEXT("NORMALS");
+    case aiTextureType_SHININESS: return TEXT("SHININESS");
+    case aiTextureType_OPACITY: return TEXT("OPACITY");
+    case aiTextureType_DISPLACEMENT: return TEXT("DISPLACEMENT");
+    case aiTextureType_LIGHTMAP: return TEXT("LIGHTMAP");
+    case aiTextureType_REFLECTION: return TEXT("REFLECTION");
+    case aiTextureType_BASE_COLOR: return TEXT("BASE_COLOR");
+    case aiTextureType_NORMAL_CAMERA: return TEXT("NORMAL_CAMERA");
+    case aiTextureType_EMISSION_COLOR: return TEXT("EMISSION_COLOR");
+    case aiTextureType_METALNESS: return TEXT("METALNESS");
+    case aiTextureType_DIFFUSE_ROUGHNESS: return TEXT("DIFFUSE_ROUGHNESS");
+    case aiTextureType_AMBIENT_OCCLUSION: return TEXT("AMBIENT_OCCLUSION");
+    default: return FString::Printf(TEXT("UNKNOWN (%d)"), Type);
     }
 }
