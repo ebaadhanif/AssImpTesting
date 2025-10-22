@@ -97,6 +97,6 @@ private:
     FModelNodeData RootNode;
     TMap<aiMaterial*, UMaterialInstanceDynamic*> MaterialCache;
 
-
+    const aiScene* TempScene;
 };
 
